@@ -22,6 +22,7 @@ import {
   addEdge,
   addNode,
   prepareDrawStartFromEdgePoint,
+  splitEdgeAtPoint,
 } from "../core/graph/graphOps";
 import type { DragSession } from "../core/drag/dragSessionTypes";
 import type { FloorplannerStore, TopologyState, SelectionState } from "./types";
@@ -131,6 +132,38 @@ function resolveDrawWallEndpoint(
     to,
     snap,
   };
+}
+
+function resolveOrCreatePolylineNode(
+  graph: WallGraph,
+  snap: ReturnType<typeof resolveSnapWithHysteresis>,
+  fallbackWorld: { x: number; y: number },
+  floorLevel: number,
+): string {
+  if (snap?.kind === "node" && graph.nodes[snap.id]) {
+    return snap.id;
+  }
+  if (snap?.kind === "wall" && graph.edges[snap.id]) {
+    const host = graph.edges[snap.id];
+    const a = host ? graph.nodes[host.nodeAId] : null;
+    const b = host ? graph.nodes[host.nodeBId] : null;
+    if (host && a && b) {
+      const distanceToA = Math.hypot(snap.x - a.x, snap.y - a.y);
+      const distanceToB = Math.hypot(snap.x - b.x, snap.y - b.y);
+      if (distanceToA < MIN_EDGE_LENGTH_CM) {
+        return a.id;
+      }
+      if (distanceToB < MIN_EDGE_LENGTH_CM) {
+        return b.id;
+      }
+      return splitEdgeAtPoint(graph, snap.id, { x: snap.x, y: snap.y }).insertedNodeId;
+    }
+  }
+  return addNode(graph, {
+    x: snap ? snap.x : fallbackWorld.x,
+    y: snap ? snap.y : fallbackWorld.y,
+    floorLevel,
+  });
 }
 
 function getDisplayedProject(project: ProjectData, drag: DragSession): ProjectData {
@@ -432,15 +465,18 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       return null;
     }
 
+    const candidates = sortSnapCandidates(collectSnapCandidates(current.project.graph, startWorld));
+    const snap = resolveSnapWithHysteresis(candidates, null);
+
     let nodeId: string | null = null;
-    get().runGraphCommit((graph) => {
-      nodeId = addNode(graph, {
-        x: startWorld.x,
-        y: startWorld.y,
-        floorLevel,
+    if (snap?.kind === "node" && current.project.graph.nodes[snap.id]) {
+      nodeId = snap.id;
+    } else {
+      get().runGraphCommit((graph) => {
+        nodeId = resolveOrCreatePolylineNode(graph, snap, startWorld, floorLevel);
+        return graph;
       });
-      return graph;
-    });
+    }
 
     if (!nodeId) {
       return null;
@@ -459,6 +495,55 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
           drawWallStartNodeId: nodeId,
           lastNodeId: nodeId,
           floorLevel,
+        },
+        snapLock: toSnapLock(snap),
+      },
+      project: state.project,
+    }));
+
+    return { startNodeId: nodeId as string };
+  },
+
+  startWallPolylineFromEdgePoint: (edgeId, point, floorLevel) => {
+    const current = get();
+    if (current.drag.active && current.drag.intent === "draw-wall") {
+      return null;
+    }
+    if (!current.project.graph.edges[edgeId]) {
+      return null;
+    }
+
+    let nodeId: string | null = null;
+    get().runGraphCommit((graph) => {
+      const edge = graph.edges[edgeId];
+      if (!edge) {
+        return graph;
+      }
+      const prep = prepareDrawStartFromEdgePoint(graph, edgeId, point);
+      nodeId = prep.startNodeId;
+      return graph;
+    });
+
+    if (!nodeId) {
+      return null;
+    }
+
+    const refreshed = get();
+    const baseline = cloneProject(refreshed.project).graph;
+    const startNode = refreshed.project.graph.nodes[nodeId];
+    const resolvedFloorLevel = floorLevel ?? startNode?.floorLevel ?? 0;
+
+    set((state) => ({
+      drag: {
+        ...beginDrag("draw-wall", [nodeId as string], point, baseline),
+        toolFlow: {
+          activeTool: "draw-wall",
+          drawWallPolylineNodeIds: [nodeId as string],
+        },
+        payload: {
+          drawWallStartNodeId: nodeId,
+          lastNodeId: nodeId,
+          floorLevel: resolvedFloorLevel,
         },
       },
       project: state.project,
@@ -496,16 +581,12 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       if (!startNode) {
         return graph;
       }
-      const maybeExistingSnapNodeId =
-        snap?.kind === "node" && graph.nodes[snap.id] ? snap.id : null;
-
-      const targetNodeId =
-        maybeExistingSnapNodeId ??
-        addNode(graph, {
-          x: endWorld.x,
-          y: endWorld.y,
-          floorLevel: payload?.floorLevel ?? startNode.floorLevel,
-        });
+      const targetNodeId = resolveOrCreatePolylineNode(
+        graph,
+        snap,
+        endWorld,
+        payload?.floorLevel ?? startNode.floorLevel,
+      );
       if (targetNodeId === startNode.id) {
         return graph;
       }

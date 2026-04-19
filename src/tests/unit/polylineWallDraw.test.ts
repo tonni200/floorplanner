@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { useFloorplannerStore } from "../../store/createStore";
 import { createDefaultProjectData } from "../../core/model/defaults";
+import { addEdge, addNode } from "../../core/graph/graphOps";
 
 describe("polyline wall draw flow", () => {
   it("creates connected walls over multiple points", () => {
@@ -74,5 +75,66 @@ describe("polyline wall draw flow", () => {
     state.startWallPolyline({ x: 10, y: 10 }, 0);
     const confirmed = state.confirmWallPolylinePreview();
     expect(confirmed).toBeNull();
+  });
+
+  it("reuses existing wall endpoint node when snapping near it", () => {
+    const state = useFloorplannerStore.getState();
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 100, y: 100, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 300, y: 100, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    state.replaceProject(project);
+
+    const started = state.startWallPolyline({ x: 302, y: 102 }, 0);
+    expect(started).toBeTruthy();
+    expect(started?.startNodeId).toBe(b);
+
+    const graph = useFloorplannerStore.getState().project.graph;
+    expect(Object.keys(graph.nodes).length).toBe(2);
+  });
+
+  it("splits host wall when drawing into wall midpoint", () => {
+    const state = useFloorplannerStore.getState();
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 100, y: 100, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 300, y: 100, floorLevel: 0 });
+    const c = addNode(project.graph, { x: 300, y: 250, floorLevel: 0 });
+    const hostEdgeId = addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    state.replaceProject(project);
+
+    const started = state.startWallPolyline({ x: 200, y: 100 }, 0);
+    expect(started).toBeTruthy();
+    if (!started) {
+      return;
+    }
+
+    const result = state.addWallPolylinePoint({ x: 300, y: 250 });
+    expect(result).toBeTruthy();
+
+    const graph = useFloorplannerStore.getState().project.graph;
+    expect(graph.edges[hostEdgeId]).toBeUndefined();
+    expect(Object.keys(graph.nodes).length).toBe(4);
+    expect(Object.keys(graph.edges).length).toBe(3);
+  });
+
+  it("starts polyline deterministically from explicit edge point split", () => {
+    const state = useFloorplannerStore.getState();
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 100, y: 100, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 300, y: 100, floorLevel: 0 });
+    const hostEdgeId = addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    state.replaceProject(project);
+
+    const started = state.startWallPolylineFromEdgePoint(hostEdgeId, { x: 180, y: 100 });
+    expect(started).toBeTruthy();
+    if (!started) {
+      return;
+    }
+
+    const graph = useFloorplannerStore.getState().project.graph;
+    expect(graph.edges[hostEdgeId]).toBeUndefined();
+    expect(graph.nodes[started.startNodeId]).toBeDefined();
+    expect(useFloorplannerStore.getState().drag.active).toBe(true);
+    expect(useFloorplannerStore.getState().drag.intent).toBe("draw-wall");
   });
 });

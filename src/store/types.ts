@@ -93,6 +93,11 @@ export interface FloorplannerStoreActions {
     floorLevel?: FloorLevel,
   ) => void;
   startWallPolyline: (startWorld: Point2D, floorLevel?: FloorLevel) => { startNodeId: NodeId } | null;
+  startWallPolylineFromEdgePoint: (
+    edgeId: EdgeId,
+    point: Point2D,
+    floorLevel?: FloorLevel,
+  ) => { startNodeId: NodeId } | null;
   addWallPolylinePoint: (nextWorld: Point2D) => {
     closedLoop: boolean;
     edgeId: EdgeId;
