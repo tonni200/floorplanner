@@ -30,6 +30,10 @@ describe("draw from wall point", () => {
     // Host edge replaced by two edges + continuation edge.
     expect(after.edges[hostEdgeId]).toBeUndefined();
     expect(after.nodes[result.startNodeId]).toBeDefined();
+    expect(result.newEdgeId).not.toBeNull();
+    if (!result.newEdgeId) {
+      return;
+    }
     expect(after.edges[result.newEdgeId]).toBeDefined();
     expect(after.edges[result.newEdgeId]?.nodeAId).toBe(result.startNodeId);
 

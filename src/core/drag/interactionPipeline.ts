@@ -16,6 +16,10 @@ export function beginInteraction(
     active: true,
     intent,
     draggingIds,
+    toolFlow: {
+      activeTool: intent === "draw-wall" ? "draw-wall" : "select",
+      drawWallPolylineNodeIds: [],
+    },
     committedSnapshot: {
       graph: structuredClone(committedGraph),
     },
@@ -132,11 +136,22 @@ export function applySoftOrthogonalGuide(
   return orthogonalizedPoint(drag.startWorld, pointer);
 }
 
+export function applyOrthogonalGuideFromStart(
+  start: { x: number; y: number },
+  pointer: { x: number; y: number },
+): { x: number; y: number } {
+  return orthogonalizedPoint(start, pointer);
+}
+
 export function cancelInteraction(): DragSession {
   return {
     active: false,
     intent: null,
     draggingIds: [],
+    toolFlow: {
+      activeTool: "none",
+      drawWallPolylineNodeIds: [],
+    },
     committedSnapshot: null,
     previewPatch: null,
     snapLock: null,
@@ -144,3 +159,23 @@ export function cancelInteraction(): DragSession {
     payload: undefined,
   };
 }
+
+export function completeInteraction(drag: DragSession): DragSession {
+  return {
+    ...drag,
+    active: false,
+    intent: null,
+    draggingIds: [],
+    toolFlow: {
+      activeTool: "select",
+      drawWallPolylineNodeIds: [],
+    },
+    committedSnapshot: null,
+    previewPatch: null,
+    snapLock: null,
+    startWorld: null,
+    payload: undefined,
+  };
+}
+
+export const resetInteractionSession = completeInteraction;

@@ -77,7 +77,7 @@ export interface FloorplannerStoreActions {
       targetPoint?: Point2D;
       continuationLengthCm?: number;
     },
-  ) => { startNodeId: NodeId; newEdgeId: EdgeId } | null;
+  ) => { startNodeId: NodeId; newEdgeId: EdgeId | null } | null;
   updateEdgeThickness: (edgeId: EdgeId, thickness: number) => void;
   setSelection: (selection: SelectionState) => void;
   clearSelection: () => void;
@@ -92,6 +92,13 @@ export interface FloorplannerStoreActions {
     startWorld: Point2D,
     floorLevel?: FloorLevel,
   ) => void;
+  startWallPolyline: (startWorld: Point2D, floorLevel?: FloorLevel) => { startNodeId: NodeId } | null;
+  addWallPolylinePoint: (nextWorld: Point2D) => {
+    closedLoop: boolean;
+    edgeId: EdgeId;
+    nodeId: NodeId;
+  } | null;
+  finishWallPolyline: () => boolean;
   updateInteractionPreview: (pointerWorld: Point2D) => void;
   commitInteraction: () => void;
   cancelInteraction: () => void;

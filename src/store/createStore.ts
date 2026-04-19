@@ -28,6 +28,7 @@ import type { FloorplannerStore, TopologyState, SelectionState } from "./types";
 import {
   beginInteraction as beginDrag,
   cancelInteraction as cancelDrag,
+  completeInteraction as completeDrag,
   applySoftOrthogonalGuide,
   updateMoveNodePreview,
 } from "../core/drag/interactionPipeline";
@@ -69,11 +70,26 @@ const emptyDrag: DragSession = {
   active: false,
   intent: null,
   draggingIds: [],
+  toolFlow: {
+    activeTool: "none",
+    drawWallPolylineNodeIds: [],
+  },
   committedSnapshot: null,
   previewPatch: null,
   snapLock: null,
   startWorld: null,
+  payload: undefined,
 };
+
+function withDrawToolFlow(drag: DragSession, nodeIds: string[]): DragSession {
+  return {
+    ...drag,
+    toolFlow: {
+      activeTool: "draw-wall",
+      drawWallPolylineNodeIds: nodeIds,
+    },
+  };
+}
 
 function getDisplayedProject(project: ProjectData, drag: DragSession): ProjectData {
   if (!drag.active || !drag.previewPatch) {
@@ -106,6 +122,10 @@ const initialProject: ProjectData = {
     initialDerived.roomReconciliation,
   ),
 };
+
+function resetDragSession(drag: DragSession): DragSession {
+  return completeDrag(drag);
+}
 
 export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
   project: initialProject,
@@ -364,6 +384,159 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     }));
   },
 
+  startWallPolyline: (startWorld, floorLevel = 0) => {
+    const current = get();
+    if (current.drag.active && current.drag.intent === "draw-wall") {
+      return null;
+    }
+
+    let nodeId: string | null = null;
+    get().runGraphCommit((graph) => {
+      nodeId = addNode(graph, {
+        x: startWorld.x,
+        y: startWorld.y,
+        floorLevel,
+      });
+      return graph;
+    });
+
+    if (!nodeId) {
+      return null;
+    }
+
+    const refreshed = get();
+    const baseline = cloneProject(refreshed.project).graph;
+    set((state) => ({
+      drag: {
+        ...beginDrag("draw-wall", [nodeId as string], startWorld, baseline),
+        toolFlow: {
+          activeTool: "draw-wall",
+          drawWallPolylineNodeIds: [nodeId as string],
+        },
+        payload: {
+          drawWallStartNodeId: nodeId,
+          lastNodeId: nodeId,
+          floorLevel,
+        },
+      },
+      project: state.project,
+    }));
+
+    return { startNodeId: nodeId as string };
+  },
+
+  addWallPolylinePoint: (pointerWorld: { x: number; y: number }) => {
+    const current = get();
+    if (!current.drag.active || current.drag.intent !== "draw-wall") {
+      return null;
+    }
+    const committedGraph = current.project.graph;
+    if (!committedGraph) {
+      return null;
+    }
+
+    const payload = current.drag.payload as
+      | { drawWallStartNodeId?: string; lastNodeId?: string; floorLevel?: number }
+      | undefined;
+    const lastNodeId = payload?.lastNodeId ?? payload?.drawWallStartNodeId;
+    if (!lastNodeId) {
+      return null;
+    }
+    const fromNode = committedGraph.nodes[lastNodeId];
+    if (!fromNode) {
+      return null;
+    }
+
+    const candidates = sortSnapCandidates(collectSnapCandidates(committedGraph, pointerWorld));
+    const snap = resolveSnapWithHysteresis(candidates, current.drag.snapLock);
+    let endWorld = snap ? { x: snap.x, y: snap.y } : pointerWorld;
+    endWorld = applySoftOrthogonalGuide(current.drag, endWorld);
+
+    let createdEdgeId: string | null = null;
+    let createdNodeId: string | null = null;
+    let closedLoop = false;
+
+    get().runGraphCommit((graph) => {
+      const startNode = graph.nodes[lastNodeId];
+      if (!startNode) {
+        return graph;
+      }
+      const maybeExistingSnapNodeId =
+        snap?.kind === "node" && graph.nodes[snap.id] ? snap.id : null;
+
+      const targetNodeId =
+        maybeExistingSnapNodeId ??
+        addNode(graph, {
+          x: endWorld.x,
+          y: endWorld.y,
+          floorLevel: payload?.floorLevel ?? startNode.floorLevel,
+        });
+
+      createdNodeId = targetNodeId;
+      createdEdgeId = addEdge(graph, {
+        nodeAId: startNode.id,
+        nodeBId: targetNodeId,
+        floorLevel: payload?.floorLevel ?? startNode.floorLevel,
+        wallType: "inner",
+      });
+      closedLoop = Boolean(
+        payload?.drawWallStartNodeId && targetNodeId === payload.drawWallStartNodeId,
+      );
+      return graph;
+    });
+
+    if (!createdEdgeId || !createdNodeId) {
+      return null;
+    }
+
+    if (closedLoop) {
+      set((state) => ({
+        drag: completeDrag(state.drag),
+      }));
+    } else {
+      set((state) => ({
+        drag: {
+          ...state.drag,
+          toolFlow: {
+            ...state.drag.toolFlow,
+            activeTool: "draw-wall",
+            drawWallPolylineNodeIds: createdNodeId
+              ? [...(state.drag.toolFlow.drawWallPolylineNodeIds ?? []), createdNodeId]
+              : [...(state.drag.toolFlow.drawWallPolylineNodeIds ?? [])],
+          },
+          startWorld: { x: endWorld.x, y: endWorld.y },
+          payload: {
+            ...(state.drag.payload ?? {}),
+            drawWallStartNodeId:
+              (state.drag.payload as { drawWallStartNodeId?: string } | undefined)
+                ?.drawWallStartNodeId ?? lastNodeId,
+            lastNodeId: createdNodeId ?? undefined,
+            floorLevel:
+              (state.drag.payload as { floorLevel?: number } | undefined)?.floorLevel ??
+              fromNode.floorLevel,
+          },
+        },
+      }));
+    }
+
+    return {
+      edgeId: createdEdgeId,
+      nodeId: createdNodeId,
+      closedLoop,
+    };
+  },
+
+  finishWallPolyline: () => {
+    const current = get();
+    if (!current.drag.active || current.drag.intent !== "draw-wall") {
+      return false;
+    }
+    set((state) => ({
+      drag: completeDrag(state.drag),
+    }));
+    return true;
+  },
+
   updateInteractionPreview: (pointerWorld) => {
     const current = get();
     if (!current.drag.active || !current.drag.intent || !current.drag.committedSnapshot) {
@@ -400,7 +573,7 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     }
 
     set((state) => ({
-      drag: emptyDrag,
+      drag: completeDrag(state.drag),
       project: state.project,
     }));
   },

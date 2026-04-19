@@ -11,6 +11,10 @@ export interface DragSession {
   active: boolean;
   intent: DragIntent | null;
   draggingIds: string[];
+  toolFlow: {
+    activeTool: "none" | "select" | "draw-wall";
+    drawWallPolylineNodeIds: string[];
+  };
   committedSnapshot: {
     graph: import("../model/projectTypes").WallGraph;
   } | null;
