@@ -10,11 +10,13 @@ export const SNAP_RADIUS_CM = 24;
 export const SNAP_SWITCH_MIN_DELTA = 0.08;
 export const SNAP_LOCK_RELEASE_DISTANCE_CM = 18;
 export const ORTHO_GUIDE_ANGLE_DEG = 12;
+export const ORTHOGONAL_GUIDE_ENABLE_DISTANCE_CM = 6;
 export const TOLERANCES_CM = {
   snapRadius: SNAP_RADIUS_CM,
   snapSwitchMinDelta: SNAP_SWITCH_MIN_DELTA,
   snapLockReleaseDistance: SNAP_LOCK_RELEASE_DISTANCE_CM,
   orthoGuideAngleDeg: ORTHO_GUIDE_ANGLE_DEG,
+  orthogonalGuideEnableDistance: ORTHOGONAL_GUIDE_ENABLE_DISTANCE_CM,
 } as const;
 
 export const FACE_RECONCILIATION_MIN_SCORE = 0.45;

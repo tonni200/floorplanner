@@ -1,6 +1,6 @@
 import { SNAP_RADIUS_CM } from "../constants/tolerances";
 import type { Point2D, WallGraph } from "../model/projectTypes";
-import { getSnapKindPriority, type SnapCandidate } from "./snapTypes";
+import { snapKindPriority, type SnapCandidate } from "./snapTypes";
 
 const projectPointOnSegment = (p: Point2D, a: Point2D, b: Point2D): Point2D => {
   const vx = b.x - a.x;
@@ -17,7 +17,7 @@ const distance = (a: Point2D, b: Point2D): number => Math.hypot(a.x - b.x, a.y -
 
 export const sortSnapCandidates = (candidates: SnapCandidate[]): SnapCandidate[] =>
   [...candidates].sort((a, b) => {
-    const priorityDelta = getSnapKindPriority(a.kind) - getSnapKindPriority(b.kind);
+    const priorityDelta = snapKindPriority(a.kind) - snapKindPriority(b.kind);
     if (priorityDelta !== 0) {
       return priorityDelta;
     }

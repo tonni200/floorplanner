@@ -34,6 +34,8 @@ export const snapKindPriority = (kind: SnapKind): number => {
   }
 };
 
+export const getSnapKindPriority = snapKindPriority;
+
 export const compareSnapCandidates = (a: SnapCandidate, b: SnapCandidate): number => {
   const priorityDelta = snapKindPriority(a.kind) - snapKindPriority(b.kind);
   if (priorityDelta !== 0) {

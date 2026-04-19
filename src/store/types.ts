@@ -75,6 +75,7 @@ export interface FloorplannerStoreActions {
       thickness?: number;
       floorLevel?: FloorLevel;
       targetPoint?: Point2D;
+      continuationLengthCm?: number;
     },
   ) => { startNodeId: NodeId; newEdgeId: EdgeId } | null;
   updateEdgeThickness: (edgeId: EdgeId, thickness: number) => void;

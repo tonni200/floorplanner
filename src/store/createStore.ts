@@ -18,7 +18,11 @@ import { reconcileFaces } from "../core/reconciliation/faceReconciliation";
 import { reconcileRoomMetadata } from "../core/reconciliation/roomMetadataReconciliation";
 import { validateInvariants } from "../core/validation/invariants";
 import { createInitialHistory, pushHistory, redoHistory, undoHistory } from "../core/history/historyStore";
-import { startWallFromEdgePoint as splitAndStartWall } from "../core/graph/graphOps";
+import {
+  addEdge,
+  addNode,
+  prepareDrawStartFromEdgePoint,
+} from "../core/graph/graphOps";
 import type { DragSession } from "../core/drag/dragSessionTypes";
 import type { FloorplannerStore, TopologyState, SelectionState } from "./types";
 import {
@@ -79,6 +83,17 @@ function getDisplayedProject(project: ProjectData, drag: DragSession): ProjectDa
     ...project,
     graph: drag.previewPatch.graph,
   };
+}
+
+function chooseWallContinuationTarget(
+  graph: WallGraph,
+  start: { x: number; y: number; floorLevel: number },
+  requestedTarget?: { x: number; y: number },
+): { x: number; y: number } | null {
+  if (requestedTarget) {
+    return requestedTarget;
+  }
+  return null;
 }
 
 const initialProjectBase = createEmptyProjectData();
@@ -258,10 +273,44 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     });
   },
 
-  startWallFromEdgePoint: (edgeId, point) => {
+  startWallFromEdgePoint: (edgeId, point, options) => {
+    let result: { startNodeId: string; newEdgeId: string | null } | null = null;
+
     get().runGraphCommit((graph) => {
-      splitAndStartWall(graph, edgeId, point);
+      const prep = prepareDrawStartFromEdgePoint(graph, edgeId, point);
+      const startNode = graph.nodes[prep.startNodeId];
+      if (!startNode) {
+        return graph;
+      }
+
+      const target = chooseWallContinuationTarget(graph, startNode, options?.targetPoint);
+      if (!target) {
+        result = {
+          startNodeId: prep.startNodeId,
+          newEdgeId: null,
+        };
+        return graph;
+      }
+      const targetNodeId = addNode(graph, {
+        x: target.x,
+        y: target.y,
+        floorLevel: options?.floorLevel ?? startNode.floorLevel,
+      });
+      const newEdgeId = addEdge(graph, {
+        nodeAId: prep.startNodeId,
+        nodeBId: targetNodeId,
+        floorLevel: options?.floorLevel ?? startNode.floorLevel,
+        wallType: options?.wallType,
+        thickness: options?.thickness,
+      });
+      result = {
+        startNodeId: prep.startNodeId,
+        newEdgeId,
+      };
+      return graph;
     });
+
+    return result;
   },
 
   replaceProject: (project: ProjectData) => {
@@ -346,6 +395,7 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       current.runGraphCommit((graph) => {
         graph.nodes = structuredClone(committedGraph.nodes);
         graph.edges = structuredClone(committedGraph.edges);
+        return graph;
       });
     }
 

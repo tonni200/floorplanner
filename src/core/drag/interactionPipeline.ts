@@ -1,7 +1,10 @@
 import type { WallGraph } from "../model/projectTypes";
 import type { SnapCandidate } from "../snap/snapTypes";
 import type { DragIntent, DragSession } from "./dragSessionTypes";
-import { ORTHOGONAL_GUIDE_ANGLE_DEG, ORTHOGONAL_GUIDE_ENABLE_DISTANCE_CM } from "../constants/tolerances";
+import {
+  ORTHO_GUIDE_ANGLE_DEG,
+  ORTHOGONAL_GUIDE_ENABLE_DISTANCE_CM,
+} from "../constants/tolerances";
 
 export function beginInteraction(
   intent: DragIntent,
@@ -102,7 +105,7 @@ function orthogonalizedPoint(
     }
   }
 
-  if (minDelta > ORTHOGONAL_GUIDE_ANGLE_DEG) {
+  if (minDelta > ORTHO_GUIDE_ANGLE_DEG) {
     return pointer;
   }
 
