@@ -99,6 +99,16 @@ export interface FloorplannerStoreActions {
     nodeId: NodeId;
   } | null;
   finishWallPolyline: () => boolean;
+  previewWallPolyline: (pointerWorld: Point2D) => {
+    from: Point2D;
+    to: Point2D;
+    lengthCm: number;
+  } | null;
+  confirmWallPolylinePreview: () => {
+    closedLoop: boolean;
+    edgeId: EdgeId;
+    nodeId: NodeId;
+  } | null;
   updateInteractionPreview: (pointerWorld: Point2D) => void;
   commitInteraction: () => void;
   cancelInteraction: () => void;

@@ -43,4 +43,36 @@ describe("polyline wall draw flow", () => {
     expect(useFloorplannerStore.getState().drag.active).toBe(false);
     expect(useFloorplannerStore.getState().drag.intent).toBeNull();
   });
+
+  it("returns deterministic preview data and commits via confirm action", () => {
+    const state = useFloorplannerStore.getState();
+    state.replaceProject(createDefaultProjectData());
+
+    const started = state.startWallPolyline({ x: 100, y: 100 }, 0);
+    expect(started).toBeTruthy();
+    if (!started) {
+      return;
+    }
+
+    const preview = state.previewWallPolyline({ x: 220, y: 118 });
+    expect(preview).toBeTruthy();
+    expect(preview?.from).toEqual({ x: 100, y: 100 });
+    expect(preview?.to.x).toBeGreaterThan(100);
+    expect(preview?.lengthCm).toBeGreaterThan(0);
+
+    const confirmed = state.confirmWallPolylinePreview();
+    expect(confirmed).toBeTruthy();
+    expect(confirmed?.closedLoop).toBe(false);
+    expect(Object.keys(useFloorplannerStore.getState().project.graph.edges)).toHaveLength(1);
+    expect(useFloorplannerStore.getState().drag.previewPatch).toBeNull();
+  });
+
+  it("does not confirm when no live preview exists", () => {
+    const state = useFloorplannerStore.getState();
+    state.replaceProject(createDefaultProjectData());
+
+    state.startWallPolyline({ x: 10, y: 10 }, 0);
+    const confirmed = state.confirmWallPolylinePreview();
+    expect(confirmed).toBeNull();
+  });
 });

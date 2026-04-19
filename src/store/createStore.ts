@@ -29,11 +29,13 @@ import {
   beginInteraction as beginDrag,
   cancelInteraction as cancelDrag,
   completeInteraction as completeDrag,
+  applyOrthogonalGuideFromStart,
   applySoftOrthogonalGuide,
   updateMoveNodePreview,
 } from "../core/drag/interactionPipeline";
 import { collectSnapCandidates, sortSnapCandidates } from "../core/snap/snapEngine";
-import { resolveSnapWithHysteresis } from "../core/snap/hysteresis";
+import { resolveSnapWithHysteresis, toSnapLock } from "../core/snap/hysteresis";
+import { MIN_EDGE_LENGTH_CM } from "../core/constants/tolerances";
 
 function deriveTopology(
   graph: WallGraph,
@@ -88,6 +90,46 @@ function withDrawToolFlow(drag: DragSession, nodeIds: string[]): DragSession {
       activeTool: "draw-wall",
       drawWallPolylineNodeIds: nodeIds,
     },
+  };
+}
+
+function resolveDrawWallEndpoint(
+  drag: DragSession,
+  committedGraph: WallGraph,
+  pointerWorld: { x: number; y: number },
+): {
+  payload: { drawWallStartNodeId?: string; lastNodeId?: string; floorLevel?: number } | undefined;
+  lastNodeId: string;
+  fromNode: WallGraph["nodes"][string];
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  snap: ReturnType<typeof resolveSnapWithHysteresis>;
+} | null {
+  const payload = drag.payload as
+    | { drawWallStartNodeId?: string; lastNodeId?: string; floorLevel?: number }
+    | undefined;
+  const lastNodeId = payload?.lastNodeId ?? payload?.drawWallStartNodeId;
+  if (!lastNodeId) {
+    return null;
+  }
+
+  const fromNode = committedGraph.nodes[lastNodeId];
+  if (!fromNode) {
+    return null;
+  }
+
+  const candidates = sortSnapCandidates(collectSnapCandidates(committedGraph, pointerWorld));
+  const snap = resolveSnapWithHysteresis(candidates, drag.snapLock);
+  let to = snap ? { x: snap.x, y: snap.y } : pointerWorld;
+  to = applySoftOrthogonalGuide(drag, to);
+
+  return {
+    payload,
+    lastNodeId,
+    fromNode,
+    from: { x: fromNode.x, y: fromNode.y },
+    to,
+    snap,
   };
 }
 
@@ -435,22 +477,15 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       return null;
     }
 
-    const payload = current.drag.payload as
-      | { drawWallStartNodeId?: string; lastNodeId?: string; floorLevel?: number }
-      | undefined;
-    const lastNodeId = payload?.lastNodeId ?? payload?.drawWallStartNodeId;
-    if (!lastNodeId) {
+    const resolved = resolveDrawWallEndpoint(current.drag, committedGraph, pointerWorld);
+    if (!resolved) {
       return null;
     }
-    const fromNode = committedGraph.nodes[lastNodeId];
-    if (!fromNode) {
+    const { payload, lastNodeId, fromNode, to: endWorld, snap } = resolved;
+    const segmentLength = Math.hypot(endWorld.x - fromNode.x, endWorld.y - fromNode.y);
+    if (segmentLength < MIN_EDGE_LENGTH_CM) {
       return null;
     }
-
-    const candidates = sortSnapCandidates(collectSnapCandidates(committedGraph, pointerWorld));
-    const snap = resolveSnapWithHysteresis(candidates, current.drag.snapLock);
-    let endWorld = snap ? { x: snap.x, y: snap.y } : pointerWorld;
-    endWorld = applySoftOrthogonalGuide(current.drag, endWorld);
 
     let createdEdgeId: string | null = null;
     let createdNodeId: string | null = null;
@@ -471,6 +506,9 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
           y: endWorld.y,
           floorLevel: payload?.floorLevel ?? startNode.floorLevel,
         });
+      if (targetNodeId === startNode.id) {
+        return graph;
+      }
 
       createdNodeId = targetNodeId;
       createdEdgeId = addEdge(graph, {
@@ -515,6 +553,8 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
               (state.drag.payload as { floorLevel?: number } | undefined)?.floorLevel ??
               fromNode.floorLevel,
           },
+          snapLock: toSnapLock(snap),
+          previewPatch: null,
         },
       }));
     }
@@ -535,6 +575,58 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       drag: completeDrag(state.drag),
     }));
     return true;
+  },
+
+  previewWallPolyline: (pointerWorld) => {
+    const current = get();
+    if (!current.drag.active || current.drag.intent !== "draw-wall") {
+      return null;
+    }
+    const committedGraph = current.project.graph;
+    const resolved = resolveDrawWallEndpoint(current.drag, committedGraph, pointerWorld);
+    if (!resolved) {
+      return null;
+    }
+
+    const { from, to, snap } = resolved;
+    const lengthCm = Math.hypot(to.x - from.x, to.y - from.y);
+
+    set((state) => ({
+      drag: {
+        ...state.drag,
+        snapLock: toSnapLock(snap) ?? state.drag.snapLock,
+        previewPatch: {
+          graph: structuredClone(state.project.graph),
+          pointerWorld: { x: pointerWorld.x, y: pointerWorld.y },
+          snappedWorld: { x: to.x, y: to.y },
+          candidate: snap,
+        },
+      },
+    }));
+
+    return { from, to, lengthCm };
+  },
+
+  confirmWallPolylinePreview: () => {
+    const current = get();
+    if (!current.drag.active || current.drag.intent !== "draw-wall") {
+      return null;
+    }
+
+    const preview = current.drag.previewPatch;
+    if (!preview) {
+      return null;
+    }
+
+    const resolved = resolveDrawWallEndpoint(current.drag, current.project.graph, preview.pointerWorld);
+    if (!resolved) {
+      return null;
+    }
+    const segmentLength = Math.hypot(resolved.to.x - resolved.from.x, resolved.to.y - resolved.from.y);
+    if (segmentLength < MIN_EDGE_LENGTH_CM) {
+      return null;
+    }
+    return get().addWallPolylinePoint({ x: resolved.to.x, y: resolved.to.y });
   },
 
   updateInteractionPreview: (pointerWorld) => {
