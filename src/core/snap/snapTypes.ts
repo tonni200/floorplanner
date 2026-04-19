@@ -18,3 +18,9 @@ export interface SnapResolution {
   candidate: SnapCandidate | null;
   lock: SnapLock | null;
 }
+
+export interface SnapPreview {
+  world: { x: number; y: number };
+  candidate: SnapCandidate | null;
+  lock: SnapLock | null;
+}

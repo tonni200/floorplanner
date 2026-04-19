@@ -75,7 +75,12 @@ export interface FloorplannerStoreActions {
   markSaved: () => void;
   setSaveError: (message: string) => void;
   setDevMode: (enabled: boolean) => void;
-  beginInteraction: (intent: DragSession["intent"], startWorld: Point2D, floorLevel?: FloorLevel) => void;
+  beginInteraction: (
+    intent: DragSession["intent"],
+    draggingIds: string[],
+    startWorld: Point2D,
+    floorLevel?: FloorLevel,
+  ) => void;
   updateInteractionPreview: (pointerWorld: Point2D) => void;
   commitInteraction: () => void;
   cancelInteraction: () => void;

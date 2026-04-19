@@ -32,12 +32,49 @@ export function App() {
     state.replaceProject(project);
   };
 
+  const selectedNodeId = state.selection.nodeIds[0] ?? null;
+  const selectedNode = selectedNodeId ? state.project.graph.nodes[selectedNodeId] : null;
+  const nudgeSelectedNode = (dx: number, dy: number) => {
+    if (!selectedNodeId || !selectedNode) {
+      return;
+    }
+    state.beginInteraction(
+      "move-node",
+      [selectedNodeId],
+      { x: selectedNode.x, y: selectedNode.y },
+    );
+    state.updateInteractionPreview({ x: selectedNode.x + dx, y: selectedNode.y + dy });
+    state.commitInteraction();
+  };
+
   return (
     <main style={{ padding: 16, fontFamily: "Inter, Arial, sans-serif" }}>
       <h1>Summerhouse Floorplanner (Foundation)</h1>
       <p>Single structural truth: wall graph (nodes + edges).</p>
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={seedRectangle}>Seed rectangle</button>
+        <button
+          onClick={() => {
+            const firstNodeId = Object.keys(state.project.graph.nodes)[0];
+            if (!firstNodeId) {
+              return;
+            }
+            state.setSelection({
+              nodeIds: [firstNodeId],
+              edgeIds: [],
+              roomIds: [],
+              openingIds: [],
+              furnitureIds: [],
+              annotationIds: [],
+              marquee: null,
+            });
+          }}
+        >
+          Select first node
+        </button>
+        <button onClick={() => nudgeSelectedNode(20, 0)} disabled={!selectedNode}>
+          Nudge +20cm X
+        </button>
         <button onClick={state.undo}>Undo</button>
         <button onClick={state.redo}>Redo</button>
       </div>
@@ -46,6 +83,8 @@ export function App() {
         <li>Edges: {summary.edgeCount}</li>
         <li>Faces: {summary.faceCount}</li>
         <li>Rooms: {summary.roomCount}</li>
+        <li>Drag active: {state.drag.active ? "yes" : "no"}</li>
+        <li>Preview active: {state.drag.previewPatch ? "yes" : "no"}</li>
       </ul>
       <pre>{JSON.stringify(state.debug.lastValidationErrors, null, 2)}</pre>
     </main>

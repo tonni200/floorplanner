@@ -24,7 +24,7 @@ describe("integration interaction flow", () => {
   it("closes loop and exits wall tool state", () => {
     const state = useFloorplannerStore.getState();
     state.replaceProject(createDefaultProjectData());
-    state.beginInteraction("draw-wall", { x: 0, y: 0 });
+    state.beginInteraction("draw-wall", [], { x: 0, y: 0 });
     state.cancelInteraction();
     expect(useFloorplannerStore.getState().drag.active).toBe(false);
   });

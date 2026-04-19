@@ -34,3 +34,14 @@ export const resolveSnapWithHysteresis = (
 
   return best;
 };
+
+export const toSnapLock = (candidate: SnapCandidate | null): SnapLock | null => {
+  if (!candidate) {
+    return null;
+  }
+  return {
+    candidateId: candidate.id,
+    kind: candidate.kind,
+    lockScore: candidate.score,
+  };
+};

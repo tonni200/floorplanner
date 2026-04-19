@@ -73,3 +73,11 @@ export const collectSnapCandidates = (graph: WallGraph, pointer: Point2D): SnapC
     return b.score - a.score;
   });
 };
+
+export const pickBestSnap = (
+  graph: WallGraph,
+  pointer: Point2D,
+): SnapCandidate | null => {
+  const candidates = collectSnapCandidates(graph, pointer);
+  return candidates[0] ?? null;
+};

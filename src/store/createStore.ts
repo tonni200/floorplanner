@@ -20,7 +20,13 @@ import { validateInvariants } from "../core/validation/invariants";
 import { createInitialHistory, pushHistory, redoHistory, undoHistory } from "../core/history/historyStore";
 import type { DragSession } from "../core/drag/dragSessionTypes";
 import type { FloorplannerStore, TopologyState, SelectionState } from "./types";
-import { beginInteraction as beginDrag, cancelInteraction as cancelDrag } from "../core/drag/interactionPipeline";
+import {
+  beginInteraction as beginDrag,
+  cancelInteraction as cancelDrag,
+  updateMoveNodePreview,
+} from "../core/drag/interactionPipeline";
+import { collectSnapCandidates } from "../core/snap/snapEngine";
+import { resolveSnapWithHysteresis } from "../core/snap/hysteresis";
 
 function deriveTopology(
   graph: WallGraph,
@@ -62,6 +68,16 @@ const emptyDrag: DragSession = {
   snapLock: null,
   startWorld: null,
 };
+
+function getDisplayedProject(project: ProjectData, drag: DragSession): ProjectData {
+  if (!drag.active || !drag.previewPatch) {
+    return project;
+  }
+  return {
+    ...project,
+    graph: drag.previewPatch.graph,
+  };
+}
 
 const initialProjectBase = createEmptyProjectData();
 const initialDerived = deriveTopology(initialProjectBase.graph, []);
@@ -262,18 +278,54 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     }));
   },
 
-  beginInteraction: (intent, startWorld) => {
+  beginInteraction: (intent, draggingIds, startWorld) => {
+    const current = get();
+    const baseline = cloneProject(current.project).graph;
+    const selectionIds = draggingIds.length > 0
+      ? draggingIds
+      : intent === "move-node"
+        ? current.selection.nodeIds
+        : intent === "move-wall"
+          ? current.selection.edgeIds
+          : [];
+
     set((state) => ({
-      drag: beginDrag(intent ?? "none", [], startWorld),
+      drag: beginDrag(intent ?? "none", selectionIds, startWorld, baseline),
       project: state.project,
     }));
   },
 
-  updateInteractionPreview: (_pointerWorld) => {
-    // Preview pipeline is introduced in Phase C; state remains immutable here.
+  updateInteractionPreview: (pointerWorld) => {
+    const current = get();
+    if (!current.drag.active || !current.drag.intent || !current.drag.committedSnapshot) {
+      return;
+    }
+
+    const baselineGraph = current.drag.committedSnapshot.graph;
+    const candidates = collectSnapCandidates(baselineGraph, pointerWorld);
+    const snap = resolveSnapWithHysteresis(candidates, current.drag.snapLock);
+    const snappedPointer = snap ? { x: snap.x, y: snap.y } : pointerWorld;
+
+    if (current.drag.intent === "move-node") {
+      const nextDrag = updateMoveNodePreview(current.drag, snappedPointer, snap);
+      set(() => ({ drag: nextDrag }));
+    }
   },
 
   commitInteraction: () => {
+    const current = get();
+    if (!current.drag.active) {
+      return;
+    }
+
+    const committedGraph = current.drag.previewPatch?.graph;
+    if (committedGraph) {
+      current.runGraphCommit((graph) => {
+        graph.nodes = structuredClone(committedGraph.nodes);
+        graph.edges = structuredClone(committedGraph.edges);
+      });
+    }
+
     set((state) => ({
       drag: emptyDrag,
       project: state.project,
@@ -370,4 +422,9 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
         devMode: enabled,
       },
     })),
+
+  getRenderedProject: () => {
+    const state = get();
+    return getDisplayedProject(state.project, state.drag);
+  },
 }));

@@ -16,6 +16,18 @@ const makeCandidate = (
 });
 
 describe("snap hysteresis", () => {
+  it("keeps lock against weaker alternative", () => {
+    const lock: SnapLock = {
+      candidateId: "node-1",
+      kind: "node",
+      lockScore: 0.9,
+    };
+    const candidates = [makeCandidate("node-1", "node", 0.89), makeCandidate("wall-1", "wall", 0.91)];
+    const chosen = resolveSnapWithHysteresis(candidates, lock);
+    expect(chosen).not.toBeNull();
+    expect(chosen?.id).toBe("node-1");
+  });
+
   it("keeps lock unless another candidate beats switch threshold", () => {
     const lock: SnapLock = {
       candidateId: "node-1",
