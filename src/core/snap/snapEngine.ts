@@ -1,6 +1,6 @@
 import { SNAP_RADIUS_CM } from "../constants/tolerances";
 import type { Point2D, WallGraph } from "../model/projectTypes";
-import type { SnapCandidate } from "./snapTypes";
+import { getSnapKindPriority, type SnapCandidate } from "./snapTypes";
 
 const projectPointOnSegment = (p: Point2D, a: Point2D, b: Point2D): Point2D => {
   const vx = b.x - a.x;
@@ -15,20 +15,14 @@ const projectPointOnSegment = (p: Point2D, a: Point2D, b: Point2D): Point2D => {
 
 const distance = (a: Point2D, b: Point2D): number => Math.hypot(a.x - b.x, a.y - b.y);
 
-const candidateWeight = (kind: SnapCandidate["kind"]): number => {
-  switch (kind) {
-    case "node":
-      return 1;
-    case "wall":
-      return 2;
-    case "guide":
-      return 3;
-    case "element":
-      return 4;
-    case "grid":
-      return 5;
-  }
-};
+export const sortSnapCandidates = (candidates: SnapCandidate[]): SnapCandidate[] =>
+  [...candidates].sort((a, b) => {
+    const priorityDelta = getSnapKindPriority(a.kind) - getSnapKindPriority(b.kind);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return b.score - a.score;
+  });
 
 export const collectSnapCandidates = (graph: WallGraph, pointer: Point2D): SnapCandidate[] => {
   const candidates: SnapCandidate[] = [];
@@ -65,13 +59,7 @@ export const collectSnapCandidates = (graph: WallGraph, pointer: Point2D): SnapC
     }
   }
 
-  return candidates.sort((a, b) => {
-    const weightDelta = candidateWeight(a.kind) - candidateWeight(b.kind);
-    if (weightDelta !== 0) {
-      return weightDelta;
-    }
-    return b.score - a.score;
-  });
+  return sortSnapCandidates(candidates);
 };
 
 export const pickBestSnap = (

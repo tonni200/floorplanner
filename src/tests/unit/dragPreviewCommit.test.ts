@@ -17,7 +17,7 @@ describe("drag preview/commit pipeline", () => {
     expect(beforeX).toBe(100);
 
     useFloorplannerStore.getState().beginInteraction("move-node", [a], { x: 100, y: 100 });
-    useFloorplannerStore.getState().updateInteractionPreview({ x: 160, y: 160 });
+    useFloorplannerStore.getState().updateInteractionPreview({ x: 160, y: 108 });
 
     // committed graph remains unchanged during preview
     const duringX = useFloorplannerStore.getState().project.graph.nodes[a]?.x;
@@ -27,7 +27,7 @@ describe("drag preview/commit pipeline", () => {
     useFloorplannerStore.getState().commitInteraction();
     const after = useFloorplannerStore.getState().project.graph.nodes[a];
     expect(after?.x).toBe(160);
-    expect(after?.y).toBe(160);
+    expect(after?.y).toBe(100);
   });
 
   it("keeps topology timestamp stable during preview, updates on commit", () => {

@@ -18,14 +18,16 @@ import { reconcileFaces } from "../core/reconciliation/faceReconciliation";
 import { reconcileRoomMetadata } from "../core/reconciliation/roomMetadataReconciliation";
 import { validateInvariants } from "../core/validation/invariants";
 import { createInitialHistory, pushHistory, redoHistory, undoHistory } from "../core/history/historyStore";
+import { startWallFromEdgePoint as splitAndStartWall } from "../core/graph/graphOps";
 import type { DragSession } from "../core/drag/dragSessionTypes";
 import type { FloorplannerStore, TopologyState, SelectionState } from "./types";
 import {
   beginInteraction as beginDrag,
   cancelInteraction as cancelDrag,
+  applySoftOrthogonalGuide,
   updateMoveNodePreview,
 } from "../core/drag/interactionPipeline";
-import { collectSnapCandidates } from "../core/snap/snapEngine";
+import { collectSnapCandidates, sortSnapCandidates } from "../core/snap/snapEngine";
 import { resolveSnapWithHysteresis } from "../core/snap/hysteresis";
 
 function deriveTopology(
@@ -256,6 +258,12 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     });
   },
 
+  startWallFromEdgePoint: (edgeId, point) => {
+    get().runGraphCommit((graph) => {
+      splitAndStartWall(graph, edgeId, point);
+    });
+  },
+
   replaceProject: (project: ProjectData) => {
     const derived = deriveTopology(project.graph, []);
     const nextProject: ProjectData = {
@@ -289,8 +297,20 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
           ? current.selection.edgeIds
           : [];
 
+    const anchorWorld =
+      intent === "move-node" && selectionIds.length > 0
+        ? (() => {
+            const nodeId = selectionIds[0];
+            if (!nodeId) {
+              return startWorld;
+            }
+            const node = current.project.graph.nodes[nodeId];
+            return node ? { x: node.x, y: node.y } : startWorld;
+          })()
+        : startWorld;
+
     set((state) => ({
-      drag: beginDrag(intent ?? "none", selectionIds, startWorld, baseline),
+      drag: beginDrag(intent ?? "none", selectionIds, anchorWorld, baseline),
       project: state.project,
     }));
   },
@@ -302,9 +322,12 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     }
 
     const baselineGraph = current.drag.committedSnapshot.graph;
-    const candidates = collectSnapCandidates(baselineGraph, pointerWorld);
+    const candidates = sortSnapCandidates(collectSnapCandidates(baselineGraph, pointerWorld));
     const snap = resolveSnapWithHysteresis(candidates, current.drag.snapLock);
-    const snappedPointer = snap ? { x: snap.x, y: snap.y } : pointerWorld;
+    let snappedPointer = snap ? { x: snap.x, y: snap.y } : pointerWorld;
+    if (current.drag.intent === "draw-wall" || current.drag.intent === "move-node") {
+      snappedPointer = applySoftOrthogonalGuide(current.drag, snappedPointer);
+    }
 
     if (current.drag.intent === "move-node") {
       const nextDrag = updateMoveNodePreview(current.drag, snappedPointer, snap);

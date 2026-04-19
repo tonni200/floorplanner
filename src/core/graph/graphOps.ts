@@ -122,6 +122,26 @@ export function splitEdgeAtPoint(
   return { insertedNodeId, leftEdgeId, rightEdgeId };
 }
 
+/**
+ * Deterministic entry point for "draw from any point on wall".
+ * Splits host edge into two real edges and returns inserted node ID
+ * as the canonical start node for continued wall drawing.
+ */
+export function prepareDrawStartFromEdgePoint(
+  graph: WallGraph,
+  edgeId: EdgeId,
+  point: { x: number; y: number },
+): {
+  startNodeId: NodeId;
+  split: { insertedNodeId: NodeId; leftEdgeId: EdgeId; rightEdgeId: EdgeId };
+} {
+  const split = splitEdgeAtPoint(graph, edgeId, point);
+  return {
+    startNodeId: split.insertedNodeId,
+    split,
+  };
+}
+
 export function mergeNodes(graph: WallGraph, sourceNodeId: NodeId, targetNodeId: NodeId): void {
   if (sourceNodeId === targetNodeId) {
     return;
@@ -163,4 +183,17 @@ export function mergeNodes(graph: WallGraph, sourceNodeId: NodeId, targetNodeId:
   }
 
   delete graph.nodes[sourceNodeId];
+}
+
+export function startWallFromEdgePoint(
+  graph: WallGraph,
+  edgeId: EdgeId,
+  point: { x: number; y: number },
+): { startNodeId: NodeId; leftEdgeId: EdgeId; rightEdgeId: EdgeId } {
+  const split = splitEdgeAtPoint(graph, edgeId, point);
+  return {
+    startNodeId: split.insertedNodeId,
+    leftEdgeId: split.leftEdgeId,
+    rightEdgeId: split.rightEdgeId,
+  };
 }

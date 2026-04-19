@@ -67,6 +67,16 @@ export interface FloorplannerStoreActions {
   upsertFurniture: (furniture: FurnitureObject) => void;
   upsertAnnotation: (annotation: AnnotationObject) => void;
   updateNodePosition: (nodeId: NodeId, x: number, y: number) => void;
+  startWallFromEdgePoint: (
+    edgeId: EdgeId,
+    point: Point2D,
+    options?: {
+      wallType?: WallEdge["wallType"];
+      thickness?: number;
+      floorLevel?: FloorLevel;
+      targetPoint?: Point2D;
+    },
+  ) => { startNodeId: NodeId; newEdgeId: EdgeId } | null;
   updateEdgeThickness: (edgeId: EdgeId, thickness: number) => void;
   setSelection: (selection: SelectionState) => void;
   clearSelection: () => void;

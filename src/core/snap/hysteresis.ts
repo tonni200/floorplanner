@@ -1,5 +1,6 @@
 import { SNAP_SWITCH_MIN_DELTA } from "../constants/tolerances";
 import type { SnapCandidate, SnapLock } from "./snapTypes";
+import { compareSnapCandidates } from "./snapTypes";
 
 export const resolveSnapWithHysteresis = (
   candidates: SnapCandidate[],
@@ -9,7 +10,7 @@ export const resolveSnapWithHysteresis = (
     return null;
   }
 
-  const sortedCandidates = [...candidates].sort((a, b) => b.score - a.score);
+  const sortedCandidates = [...candidates].sort(compareSnapCandidates);
   const best = sortedCandidates[0];
   if (!best) {
     return null;

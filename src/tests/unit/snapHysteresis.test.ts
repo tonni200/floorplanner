@@ -51,4 +51,15 @@ describe("snap hysteresis", () => {
     expect(chosen).not.toBeNull();
     expect(chosen?.id).toBe("node-2");
   });
+
+  it("respects snap priority order before raw score", () => {
+    const candidates = [
+      makeCandidate("wall-1", "wall", 100),
+      makeCandidate("node-1", "node", 30),
+    ];
+    const chosen = resolveSnapWithHysteresis(candidates, null);
+    expect(chosen).not.toBeNull();
+    expect(chosen?.kind).toBe("node");
+    expect(chosen?.id).toBe("node-1");
+  });
 });
