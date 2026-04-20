@@ -484,9 +484,11 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
 
     const refreshed = get();
     const baseline = cloneProject(refreshed.project).graph;
+    const startNode = refreshed.project.graph.nodes[nodeId];
+    const startAnchor = startNode ? { x: startNode.x, y: startNode.y } : startWorld;
     set((state) => ({
       drag: {
-        ...beginDrag("draw-wall", [nodeId as string], startWorld, baseline),
+        ...beginDrag("draw-wall", [nodeId as string], startAnchor, baseline),
         toolFlow: {
           activeTool: "draw-wall",
           drawWallPolylineNodeIds: [nodeId as string],
@@ -532,10 +534,11 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
     const baseline = cloneProject(refreshed.project).graph;
     const startNode = refreshed.project.graph.nodes[nodeId];
     const resolvedFloorLevel = floorLevel ?? startNode?.floorLevel ?? 0;
+    const startAnchor = startNode ? { x: startNode.x, y: startNode.y } : point;
 
     set((state) => ({
       drag: {
-        ...beginDrag("draw-wall", [nodeId as string], point, baseline),
+        ...beginDrag("draw-wall", [nodeId as string], startAnchor, baseline),
         toolFlow: {
           activeTool: "draw-wall",
           drawWallPolylineNodeIds: [nodeId as string],

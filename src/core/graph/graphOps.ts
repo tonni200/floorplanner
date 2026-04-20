@@ -133,8 +133,35 @@ export function prepareDrawStartFromEdgePoint(
   point: { x: number; y: number },
 ): {
   startNodeId: NodeId;
-  split: { insertedNodeId: NodeId; leftEdgeId: EdgeId; rightEdgeId: EdgeId };
+  split: { insertedNodeId: NodeId; leftEdgeId: EdgeId; rightEdgeId: EdgeId } | null;
 } {
+  const edge = graph.edges[edgeId];
+  if (!edge) {
+    throw new Error(`Edge ${edgeId} does not exist.`);
+  }
+  const a = graph.nodes[edge.nodeAId];
+  const b = graph.nodes[edge.nodeBId];
+  if (!a || !b) {
+    throw new Error("Edge endpoints are invalid.");
+  }
+
+  // Reuse an existing endpoint when the requested point is effectively on it.
+  // This avoids creating a degenerate split that would violate min edge length.
+  const distanceToA = Math.hypot(point.x - a.x, point.y - a.y);
+  if (distanceToA < MIN_EDGE_LENGTH_CM) {
+    return {
+      startNodeId: a.id,
+      split: null,
+    };
+  }
+  const distanceToB = Math.hypot(point.x - b.x, point.y - b.y);
+  if (distanceToB < MIN_EDGE_LENGTH_CM) {
+    return {
+      startNodeId: b.id,
+      split: null,
+    };
+  }
+
   const split = splitEdgeAtPoint(graph, edgeId, point);
   return {
     startNodeId: split.insertedNodeId,

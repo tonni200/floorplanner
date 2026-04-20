@@ -65,4 +65,26 @@ describe("draw from wall point", () => {
     expect(after.edges[hostEdgeId]).toBeUndefined();
     expect(result.newEdgeId).toBeNull();
   });
+
+  it("reuses host endpoint when starting from near-edge endpoint", () => {
+    const state = useFloorplannerStore.getState();
+    state.replaceProject(createDefaultProjectData());
+
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 0, y: 0, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 300, y: 0, floorLevel: 0 });
+    const hostEdgeId = addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0 });
+    state.replaceProject(project);
+
+    const result = state.startWallFromEdgePoint(hostEdgeId, { x: 0.2, y: 0 });
+    expect(result).not.toBeNull();
+    if (!result) {
+      return;
+    }
+
+    const after = useFloorplannerStore.getState().project.graph;
+    expect(result.startNodeId).toBe(a);
+    expect(after.edges[hostEdgeId]).toBeDefined();
+    expect(Object.keys(after.nodes).length).toBe(2);
+  });
 });

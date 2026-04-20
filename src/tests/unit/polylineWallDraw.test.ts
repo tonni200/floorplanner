@@ -137,4 +137,22 @@ describe("polyline wall draw flow", () => {
     expect(useFloorplannerStore.getState().drag.active).toBe(true);
     expect(useFloorplannerStore.getState().drag.intent).toBe("draw-wall");
   });
+
+  it("anchors polyline start world to snapped start node", () => {
+    const state = useFloorplannerStore.getState();
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 100, y: 100, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 300, y: 100, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    state.replaceProject(project);
+
+    const started = state.startWallPolyline({ x: 296, y: 104 }, 0);
+    expect(started).toBeTruthy();
+    if (!started) {
+      return;
+    }
+
+    const drag = useFloorplannerStore.getState().drag;
+    expect(drag.startWorld).toEqual({ x: 300, y: 100 });
+  });
 });
