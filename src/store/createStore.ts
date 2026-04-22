@@ -21,6 +21,7 @@ import { createInitialHistory, pushHistory, redoHistory, undoHistory } from "../
 import {
   addEdge,
   addNode,
+  mergeNodes,
   prepareDrawStartFromEdgePoint,
   splitEdgeAtPoint,
 } from "../core/graph/graphOps";
@@ -36,7 +37,7 @@ import {
 } from "../core/drag/interactionPipeline";
 import { collectSnapCandidates, sortSnapCandidates } from "../core/snap/snapEngine";
 import { resolveSnapWithHysteresis, toSnapLock } from "../core/snap/hysteresis";
-import { MIN_EDGE_LENGTH_CM } from "../core/constants/tolerances";
+import { GEOMETRY_EPSILON_CM, MIN_EDGE_LENGTH_CM } from "../core/constants/tolerances";
 
 function deriveTopology(
   graph: WallGraph,
@@ -164,6 +165,33 @@ function resolveOrCreatePolylineNode(
     y: snap ? snap.y : fallbackWorld.y,
     floorLevel,
   });
+}
+
+function findNearestMergeTargetNodeId(
+  graph: WallGraph,
+  sourceNodeId: string,
+  mergeRadiusCm = 10,
+): string | null {
+  const source = graph.nodes[sourceNodeId];
+  if (!source) {
+    return null;
+  }
+  let bestTargetId: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const node of Object.values(graph.nodes)) {
+    if (node.id === sourceNodeId || node.floorLevel !== source.floorLevel) {
+      continue;
+    }
+    const distance = Math.hypot(node.x - source.x, node.y - source.y);
+    if (distance > mergeRadiusCm) {
+      continue;
+    }
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTargetId = node.id;
+    }
+  }
+  return bestTargetId;
 }
 
 function getDisplayedProject(project: ProjectData, drag: DragSession): ProjectData {
@@ -744,6 +772,19 @@ export const useFloorplannerStore = create<FloorplannerStore>((set, get) => ({
       current.runGraphCommit((graph) => {
         graph.nodes = structuredClone(committedGraph.nodes);
         graph.edges = structuredClone(committedGraph.edges);
+        if (current.drag.intent === "move-node") {
+          const sourceNodeId = current.drag.draggingIds[0];
+          if (sourceNodeId && graph.nodes[sourceNodeId]) {
+            const targetNodeId = findNearestMergeTargetNodeId(graph, sourceNodeId);
+            if (targetNodeId) {
+              try {
+                mergeNodes(graph, sourceNodeId, targetNodeId);
+              } catch {
+                // Keep drag commit resilient; merging is opportunistic post-commit cleanup.
+              }
+            }
+          }
+        }
         return graph;
       });
     }

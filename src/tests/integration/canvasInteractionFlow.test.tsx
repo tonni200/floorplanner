@@ -89,4 +89,47 @@ describe("canvas interaction flow", () => {
     expect(current.drag.intent).toBe("draw-wall");
     expect(current.project.graph.edges[hostEdgeId]).toBeUndefined();
   });
+
+  it("merges node when dragged onto another node", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 120, y: 120, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 220, y: 120, floorLevel: 0 });
+    const c = addNode(project.graph, { x: 320, y: 120, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    addEdge(project.graph, { nodeAId: b, nodeBId: c, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+
+    const from = worldToClient(canvas, { x: 120, y: 120 });
+    const onto = worldToClient(canvas, { x: 220, y: 120 });
+
+    fireEvent.pointerDown(canvas, { clientX: from.x, clientY: from.y });
+    fireEvent.pointerMove(canvas, { clientX: onto.x, clientY: onto.y });
+    fireEvent.pointerUp(canvas, { clientX: onto.x, clientY: onto.y });
+
+    const graph = useFloorplannerStore.getState().project.graph;
+    expect(graph.nodes[a]).toBeUndefined();
+    expect(graph.nodes[b]).toBeDefined();
+  });
+
+  it("splits edge on right-click in select mode", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 200, y: 200, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 400, y: 200, floorLevel: 0 });
+    const hostEdgeId = addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+    const midpoint = worldToClient(canvas, { x: 300, y: 200 });
+    fireEvent.contextMenu(canvas, { clientX: midpoint.x, clientY: midpoint.y });
+
+    const graph = useFloorplannerStore.getState().project.graph;
+    expect(graph.edges[hostEdgeId]).toBeUndefined();
+    expect(Object.keys(graph.nodes).length).toBe(3);
+  });
 });

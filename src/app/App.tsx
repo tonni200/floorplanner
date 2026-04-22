@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFloorplannerStore } from "../store/createStore";
 import { createEmptyProjectData } from "../core/model/defaults";
-import { addEdge, addNode } from "../core/graph/graphOps";
+import { addEdge, addNode, splitEdgeAtPoint } from "../core/graph/graphOps";
 import type { EdgeId, Face, NodeId, Point2D, WallGraph } from "../core/model/projectTypes";
 import type { SelectionState } from "../store/types";
 
@@ -306,6 +306,41 @@ export function App() {
     setWallPreview(null);
   };
 
+  const handleCanvasContextMenu = (event: React.MouseEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    if (activeTool !== "select" || isDrawWallSessionActive || isMoveNodeSessionActive) {
+      return;
+    }
+    const world = toWorldPoint(event);
+    const edgeHit = hitTestEdge(state.project.graph, world);
+    if (!edgeHit) {
+      return;
+    }
+
+    let insertedNodeId: string | null = null;
+    state.runGraphCommit((graph) => {
+      const edge = graph.edges[edgeHit.edgeId];
+      if (!edge) {
+        return graph;
+      }
+      const a = graph.nodes[edge.nodeAId];
+      const b = graph.nodes[edge.nodeBId];
+      if (!a || !b) {
+        return graph;
+      }
+      const distanceToA = Math.hypot(edgeHit.projection.x - a.x, edgeHit.projection.y - a.y);
+      const distanceToB = Math.hypot(edgeHit.projection.x - b.x, edgeHit.projection.y - b.y);
+      if (distanceToA < 1 || distanceToB < 1) {
+        return graph;
+      }
+      insertedNodeId = splitEdgeAtPoint(graph, edgeHit.edgeId, edgeHit.projection).insertedNodeId;
+      return graph;
+    });
+    if (insertedNodeId) {
+      setSelectionExclusive("node", insertedNodeId);
+    }
+  };
+
   const handleCanvasPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     if (activeTool !== "select") {
       return;
@@ -424,6 +459,7 @@ export function App() {
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
+          onContextMenu={handleCanvasContextMenu}
           onClick={handleCanvasClick}
           onDoubleClick={handleCanvasDoubleClick}
         >
