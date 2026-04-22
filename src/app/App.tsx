@@ -3,6 +3,7 @@ import { useFloorplannerStore } from "../store/createStore";
 import { createEmptyProjectData } from "../core/model/defaults";
 import { addEdge, addNode, splitEdgeAtPoint } from "../core/graph/graphOps";
 import { createOpeningId } from "../core/model/ids";
+import { loadProject, saveProject } from "../core/persistence/storage";
 import type { EdgeId, Face, NodeId, Point2D, WallGraph } from "../core/model/projectTypes";
 import type { SelectionState } from "../store/types";
 
@@ -123,6 +124,7 @@ export function App() {
     to: { x: number; y: number };
     lengthCm: number;
   } | null>(null);
+  const [lastSaveMessage, setLastSaveMessage] = useState<string>("");
 
   const summary = useMemo(
     () => ({
@@ -469,6 +471,31 @@ export function App() {
 
   const selectedNodeId = state.selection.nodeIds[0] ?? null;
   const selectedNode = selectedNodeId ? state.project.graph.nodes[selectedNodeId] : null;
+  const handleSaveProject = () => {
+    saveProject(state.project);
+    state.markSaved();
+    setLastSaveMessage("Saved");
+  };
+  const handleLoadProject = () => {
+    const loaded = loadProject();
+    if (!loaded) {
+      setLastSaveMessage("No saved project");
+      return;
+    }
+    state.replaceProject(loaded);
+    state.markSaved();
+    setActiveTool("select");
+    setWallPreview(null);
+    setOpeningPreview(null);
+    setLastSaveMessage("Loaded");
+  };
+  const handleNewProject = () => {
+    state.replaceProject(createEmptyProjectData());
+    setActiveTool("select");
+    setWallPreview(null);
+    setOpeningPreview(null);
+    setLastSaveMessage("New project");
+  };
   const nudgeSelectedNode = (dx: number, dy: number) => {
     if (!selectedNodeId || !selectedNode) {
       return;
@@ -519,6 +546,15 @@ export function App() {
           Place opening
         </button>
         <button onClick={seedRectangle}>Seed rectangle</button>
+        <button data-testid="save-project" onClick={handleSaveProject}>
+          Save
+        </button>
+        <button data-testid="load-project" onClick={handleLoadProject}>
+          Load
+        </button>
+        <button data-testid="new-project" onClick={handleNewProject}>
+          New
+        </button>
         <button
           onClick={() => {
             const firstNodeId = Object.keys(renderedGraph.nodes)[0];
@@ -533,8 +569,12 @@ export function App() {
         <button onClick={() => nudgeSelectedNode(20, 0)} disabled={!selectedNode}>
           Nudge +20cm X
         </button>
-        <button onClick={state.undo}>Undo</button>
-        <button onClick={state.redo}>Redo</button>
+        <button data-testid="undo" onClick={state.undo}>
+          Undo
+        </button>
+        <button data-testid="redo" onClick={state.redo}>
+          Redo
+        </button>
       </div>
       <p>
         Select mode: click to select, drag node handles to reshape walls. Draw mode: click to draw, Enter or
@@ -691,6 +731,8 @@ export function App() {
         <li>Draw-wall active: {isDrawWallSessionActive ? "yes" : "no"}</li>
         <li>Preview active: {state.drag.previewPatch ? "yes" : "no"}</li>
         <li>Openings: {Object.keys(state.project.openings).length}</li>
+        <li>Persistence dirty: {state.persistence.dirty ? "yes" : "no"}</li>
+        <li>Last save status: {lastSaveMessage || "idle"}</li>
       </ul>
       <pre>{JSON.stringify(state.debug.lastValidationErrors, null, 2)}</pre>
     </main>
