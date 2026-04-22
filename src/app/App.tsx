@@ -14,6 +14,10 @@ const EDGE_HIT_TOLERANCE_CM = 12;
 
 type CanvasTool = "select" | "draw-wall" | "place-opening";
 
+function mergedUnique(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
 function emptySelection(): SelectionState {
   return {
     nodeIds: [],
@@ -124,6 +128,7 @@ export function App() {
     to: { x: number; y: number };
     lengthCm: number;
   } | null>(null);
+  const [openingEditWidthCm, setOpeningEditWidthCm] = useState<number>(90);
   const [lastSaveMessage, setLastSaveMessage] = useState<string>("");
 
   const summary = useMemo(
@@ -153,6 +158,30 @@ export function App() {
     }
     return map;
   }, [state.project.roomMetadataMap]);
+  const renderedOpenings = useMemo(
+    () =>
+      Object.values(state.project.openings).map((opening) => {
+        const edge = renderedGraph.edges[opening.hostEdgeId];
+        if (!edge) {
+          return null;
+        }
+        const a = renderedGraph.nodes[edge.nodeAId];
+        const b = renderedGraph.nodes[edge.nodeBId];
+        if (!a || !b) {
+          return null;
+        }
+        const edgeLength = Math.hypot(b.x - a.x, b.y - a.y);
+        if (edgeLength <= 0) {
+          return null;
+        }
+        const t = Math.max(0, Math.min(1, opening.offsetOnEdge / edgeLength));
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        const angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+        return { opening, x, y, angle };
+      }),
+    [state.project.openings, renderedGraph.edges, renderedGraph.nodes],
+  );
 
   useEffect(() => {
     if (!isDrawWallSessionActive && !isMoveNodeSessionActive && activeTool !== "place-opening") {
@@ -205,7 +234,7 @@ export function App() {
   };
 
   const setSelectionExclusive = (
-    kind: "node" | "edge" | "room" | "none",
+    kind: "node" | "edge" | "room" | "opening" | "none",
     id?: string,
   ) => {
     const selection = emptySelection();
@@ -215,6 +244,8 @@ export function App() {
       selection.edgeIds = [id];
     } else if (kind === "room" && id) {
       selection.roomIds = [id];
+    } else if (kind === "opening" && id) {
+      selection.openingIds = [id];
     }
     state.setSelection(selection);
   };
@@ -287,6 +318,7 @@ export function App() {
     }
 
     const world = toWorldPoint(event);
+    const appendToSelection = event.shiftKey && activeTool === "select";
     if (activeTool === "draw-wall" || isDrawWallSessionActive) {
       if (!isDrawWallSessionActive) {
         const edgeHit = hitTestEdge(state.project.graph, world);
@@ -344,15 +376,57 @@ export function App() {
       return;
     }
 
+    const openingHit = renderedOpenings.find((candidate) => {
+      if (!candidate) {
+        return false;
+      }
+      return Math.hypot(candidate.x - world.x, candidate.y - world.y) <= 14;
+    });
+    if (openingHit) {
+      if (appendToSelection) {
+        state.setSelection({
+          ...state.selection,
+          openingIds: mergedUnique([...state.selection.openingIds, openingHit.opening.id]),
+          nodeIds: [],
+          edgeIds: [],
+          roomIds: [],
+        });
+      } else {
+        setSelectionExclusive("opening", openingHit.opening.id);
+      }
+      setOpeningEditWidthCm(openingHit.opening.width);
+      return;
+    }
+
     const nodeHit = hitTestNode(state.project.graph, world);
     if (nodeHit) {
-      setSelectionExclusive("node", nodeHit);
+      if (appendToSelection) {
+        state.setSelection({
+          ...state.selection,
+          nodeIds: mergedUnique([...state.selection.nodeIds, nodeHit]),
+          edgeIds: [],
+          roomIds: [],
+          openingIds: [],
+        });
+      } else {
+        setSelectionExclusive("node", nodeHit);
+      }
       return;
     }
 
     const edgeHit = hitTestEdge(state.project.graph, world);
     if (edgeHit) {
-      setSelectionExclusive("edge", edgeHit.edgeId);
+      if (appendToSelection) {
+        state.setSelection({
+          ...state.selection,
+          edgeIds: mergedUnique([...state.selection.edgeIds, edgeHit.edgeId]),
+          nodeIds: [],
+          roomIds: [],
+          openingIds: [],
+        });
+      } else {
+        setSelectionExclusive("edge", edgeHit.edgeId);
+      }
       return;
     }
 
@@ -360,7 +434,17 @@ export function App() {
     if (faceHit) {
       const room = roomByFaceId.get(faceHit.id);
       if (room) {
-        setSelectionExclusive("room", room.id);
+        if (appendToSelection) {
+          state.setSelection({
+            ...state.selection,
+            roomIds: mergedUnique([...state.selection.roomIds, room.id]),
+            nodeIds: [],
+            edgeIds: [],
+            openingIds: [],
+          });
+        } else {
+          setSelectionExclusive("room", room.id);
+        }
       } else {
         setSelectionExclusive("none");
       }
@@ -471,6 +555,8 @@ export function App() {
 
   const selectedNodeId = state.selection.nodeIds[0] ?? null;
   const selectedNode = selectedNodeId ? state.project.graph.nodes[selectedNodeId] : null;
+  const selectedOpeningId = state.selection.openingIds[0] ?? null;
+  const selectedOpening = selectedOpeningId ? state.project.openings[selectedOpeningId] : null;
   const handleSaveProject = () => {
     saveProject(state.project);
     state.markSaved();
@@ -507,6 +593,29 @@ export function App() {
     );
     state.updateInteractionPreview({ x: selectedNode.x + dx, y: selectedNode.y + dy });
     state.commitInteraction();
+  };
+  const handleApplyOpeningWidth = () => {
+    if (!selectedOpening) {
+      return;
+    }
+    const clamped = Math.max(40, Math.min(400, openingEditWidthCm));
+    state.upsertOpening({
+      ...selectedOpening,
+      width: clamped,
+    });
+    setOpeningEditWidthCm(clamped);
+  };
+  const handleDeleteSelectedOpening = () => {
+    if (!selectedOpeningId) {
+      return;
+    }
+    const nextOpenings = { ...state.project.openings };
+    delete nextOpenings[selectedOpeningId];
+    state.replaceProject({
+      ...state.project,
+      openings: nextOpenings,
+    });
+    setSelectionExclusive("none");
   };
 
   return (
@@ -575,12 +684,36 @@ export function App() {
         <button data-testid="redo" onClick={state.redo}>
           Redo
         </button>
+        <button
+          data-testid="delete-opening"
+          onClick={handleDeleteSelectedOpening}
+          disabled={!selectedOpeningId}
+        >
+          Delete opening
+        </button>
       </div>
       <p>
         Select mode: click to select, drag node handles to reshape walls. Draw mode: click to draw, Enter or
         double-click to finish, Esc to cancel. Place opening mode: hover walls for valid host preview, click to
         place.
       </p>
+      {selectedOpening ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+          <label htmlFor="opening-width-input">Opening width (cm)</label>
+          <input
+            id="opening-width-input"
+            data-testid="opening-width-input"
+            type="number"
+            min={40}
+            max={400}
+            value={openingEditWidthCm}
+            onChange={(event) => setOpeningEditWidthCm(Number(event.target.value))}
+          />
+          <button data-testid="apply-opening-width" onClick={handleApplyOpeningWidth}>
+            Apply width
+          </button>
+        </div>
+      ) : null}
       <div className="canvas" style={{ height: 520, border: "1px solid #2a2e3c", borderRadius: 8 }}>
         <svg
           data-testid="floor-canvas"
@@ -675,33 +808,24 @@ export function App() {
               />
             </g>
           ) : null}
-          {Object.values(state.project.openings).map((opening) => {
-            const edge = renderedGraph.edges[opening.hostEdgeId];
-            if (!edge) {
+          {renderedOpenings.map((candidate) => {
+            if (!candidate) {
               return null;
             }
-            const a = renderedGraph.nodes[edge.nodeAId];
-            const b = renderedGraph.nodes[edge.nodeBId];
-            if (!a || !b) {
-              return null;
-            }
-            const edgeLength = Math.hypot(b.x - a.x, b.y - a.y);
-            if (edgeLength <= 0) {
-              return null;
-            }
-            const t = Math.max(0, Math.min(1, opening.offsetOnEdge / edgeLength));
-            const x = a.x + (b.x - a.x) * t;
-            const y = a.y + (b.y - a.y) * t;
-            const angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+            const selected = state.selection.openingIds.includes(candidate.opening.id);
             return (
-              <g key={opening.id} transform={`translate(${x} ${y}) rotate(${angle})`}>
+              <g
+                key={candidate.opening.id}
+                transform={`translate(${candidate.x} ${candidate.y}) rotate(${candidate.angle})`}
+                pointerEvents="none"
+              >
                 <rect
-                  x={-opening.width / 2}
+                  x={-candidate.opening.width / 2}
                   y={-4}
-                  width={opening.width}
+                  width={candidate.opening.width}
                   height={8}
-                  fill="rgba(255, 209, 102, 0.85)"
-                  stroke="#ffb703"
+                  fill={selected ? "rgba(255, 107, 107, 0.9)" : "rgba(255, 209, 102, 0.85)"}
+                  stroke={selected ? "#ff6b6b" : "#ffb703"}
                   strokeWidth={1.5}
                   rx={2}
                 />

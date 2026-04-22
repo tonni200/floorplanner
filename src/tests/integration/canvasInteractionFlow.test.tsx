@@ -5,6 +5,7 @@ import { useFloorplannerStore } from "../../store/createStore";
 import { createDefaultProjectData } from "../../core/model/defaults";
 import { addEdge, addNode } from "../../core/graph/graphOps";
 import * as storage from "../../core/persistence/storage";
+import type { EdgeId } from "../../core/model/projectTypes";
 
 function worldToClient(svg: SVGSVGElement, world: { x: number; y: number }) {
   const viewBox = svg.viewBox.baseVal;
@@ -233,5 +234,98 @@ describe("canvas interaction flow", () => {
     expect(useFloorplannerStore.getState().project.graph.nodes[a]?.x).toBe(260);
 
     saveSpy.mockRestore();
+  });
+
+  it("selects opening and applies width edit", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 180, y: 280, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 480, y: 280, floorLevel: 0 });
+    const edgeId = addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    fireEvent.click(getByTestId("tool-place-opening"));
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+    const placementPoint = worldToClient(canvas, { x: 300, y: 280 });
+    fireEvent.pointerMove(canvas, { clientX: placementPoint.x, clientY: placementPoint.y });
+    fireEvent.click(canvas, { clientX: placementPoint.x, clientY: placementPoint.y });
+
+    const [opening] = Object.values(useFloorplannerStore.getState().project.openings);
+    expect(opening).toBeDefined();
+    if (!opening) {
+      return;
+    }
+
+    const host = useFloorplannerStore.getState().project.graph.edges[opening.hostEdgeId as EdgeId];
+    expect(host).toBeDefined();
+    if (!host) {
+      return;
+    }
+    const nodeA = useFloorplannerStore.getState().project.graph.nodes[host.nodeAId];
+    const nodeB = useFloorplannerStore.getState().project.graph.nodes[host.nodeBId];
+    expect(nodeA).toBeDefined();
+    expect(nodeB).toBeDefined();
+    if (!nodeA || !nodeB) {
+      return;
+    }
+    const edgeLength = Math.hypot(nodeB.x - nodeA.x, nodeB.y - nodeA.y);
+    const t = Math.max(0, Math.min(1, opening.offsetOnEdge / Math.max(edgeLength, 1)));
+    const center = {
+      x: nodeA.x + (nodeB.x - nodeA.x) * t,
+      y: nodeA.y + (nodeB.y - nodeA.y) * t,
+    };
+    const openingCenter = worldToClient(canvas, center);
+    fireEvent.click(canvas, { clientX: openingCenter.x, clientY: openingCenter.y });
+
+    const widthInput = getByTestId("opening-width-input") as HTMLInputElement;
+    fireEvent.change(widthInput, { target: { value: "140" } });
+    fireEvent.click(getByTestId("apply-opening-width"));
+    expect(useFloorplannerStore.getState().project.openings[opening.id]?.width).toBe(140);
+  });
+
+  it("deletes selected opening from toolbar", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 220, y: 360, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 520, y: 360, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    fireEvent.click(getByTestId("tool-place-opening"));
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+    const point = worldToClient(canvas, { x: 360, y: 360 });
+    fireEvent.pointerMove(canvas, { clientX: point.x, clientY: point.y });
+    fireEvent.click(canvas, { clientX: point.x, clientY: point.y });
+
+    const [opening] = Object.values(useFloorplannerStore.getState().project.openings);
+    expect(opening).toBeDefined();
+    if (!opening) {
+      return;
+    }
+
+    const host = useFloorplannerStore.getState().project.graph.edges[opening.hostEdgeId as EdgeId];
+    expect(host).toBeDefined();
+    if (!host) {
+      return;
+    }
+    const nodeA = useFloorplannerStore.getState().project.graph.nodes[host.nodeAId];
+    const nodeB = useFloorplannerStore.getState().project.graph.nodes[host.nodeBId];
+    expect(nodeA).toBeDefined();
+    expect(nodeB).toBeDefined();
+    if (!nodeA || !nodeB) {
+      return;
+    }
+    const edgeLength = Math.hypot(nodeB.x - nodeA.x, nodeB.y - nodeA.y);
+    const t = Math.max(0, Math.min(1, opening.offsetOnEdge / Math.max(edgeLength, 1)));
+    const center = {
+      x: nodeA.x + (nodeB.x - nodeA.x) * t,
+      y: nodeA.y + (nodeB.y - nodeA.y) * t,
+    };
+    const openingCenter = worldToClient(canvas, center);
+    fireEvent.click(canvas, { clientX: openingCenter.x, clientY: openingCenter.y });
+    fireEvent.click(getByTestId("delete-opening"));
+    expect(useFloorplannerStore.getState().project.openings[opening.id]).toBeUndefined();
   });
 });
