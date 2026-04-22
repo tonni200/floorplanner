@@ -132,4 +132,43 @@ describe("canvas interaction flow", () => {
     expect(graph.edges[hostEdgeId]).toBeUndefined();
     expect(Object.keys(graph.nodes).length).toBe(3);
   });
+
+  it("places opening on valid wall preview in opening mode", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 200, y: 300, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 500, y: 300, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    fireEvent.click(getByTestId("tool-place-opening"));
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+    const point = worldToClient(canvas, { x: 320, y: 300 });
+    fireEvent.pointerMove(canvas, { clientX: point.x, clientY: point.y });
+    fireEvent.click(canvas, { clientX: point.x, clientY: point.y });
+
+    const openings = Object.values(useFloorplannerStore.getState().project.openings);
+    expect(openings.length).toBe(1);
+    expect(openings[0]?.hostEdgeId).toBeDefined();
+  });
+
+  it("blocks opening placement for invalid near-end preview", () => {
+    const project = createDefaultProjectData();
+    const a = addNode(project.graph, { x: 220, y: 340, floorLevel: 0 });
+    const b = addNode(project.graph, { x: 520, y: 340, floorLevel: 0 });
+    addEdge(project.graph, { nodeAId: a, nodeBId: b, floorLevel: 0, wallType: "inner" });
+    useFloorplannerStore.getState().replaceProject(project);
+
+    const { getByTestId } = render(<App />);
+    fireEvent.click(getByTestId("tool-place-opening"));
+    const canvas = getByTestId("floor-canvas") as unknown as SVGSVGElement;
+    mockCanvasBounds(canvas);
+    const nearEnd = worldToClient(canvas, { x: 224, y: 340 });
+    fireEvent.pointerMove(canvas, { clientX: nearEnd.x, clientY: nearEnd.y });
+    fireEvent.click(canvas, { clientX: nearEnd.x, clientY: nearEnd.y });
+
+    const openings = Object.values(useFloorplannerStore.getState().project.openings);
+    expect(openings.length).toBe(0);
+  });
 });

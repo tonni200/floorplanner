@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFloorplannerStore } from "../store/createStore";
 import { createEmptyProjectData } from "../core/model/defaults";
 import { addEdge, addNode, splitEdgeAtPoint } from "../core/graph/graphOps";
+import { createOpeningId } from "../core/model/ids";
 import type { EdgeId, Face, NodeId, Point2D, WallGraph } from "../core/model/projectTypes";
 import type { SelectionState } from "../store/types";
 
@@ -10,7 +11,7 @@ const CANVAS_HEIGHT = 800;
 const NODE_HIT_RADIUS_CM = 14;
 const EDGE_HIT_TOLERANCE_CM = 12;
 
-type CanvasTool = "select" | "draw-wall";
+type CanvasTool = "select" | "draw-wall" | "place-opening";
 
 function emptySelection(): SelectionState {
   return {
@@ -110,6 +111,13 @@ export function App() {
   } | null>(null);
   const suppressNextClickRef = useRef(false);
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
+  const [openingPreview, setOpeningPreview] = useState<{
+    edgeId: EdgeId;
+    x: number;
+    y: number;
+    valid: boolean;
+    offsetOnEdge: number;
+  } | null>(null);
   const [wallPreview, setWallPreview] = useState<{
     from: { x: number; y: number };
     to: { x: number; y: number };
@@ -145,7 +153,7 @@ export function App() {
   }, [state.project.roomMetadataMap]);
 
   useEffect(() => {
-    if (!isDrawWallSessionActive && !isMoveNodeSessionActive) {
+    if (!isDrawWallSessionActive && !isMoveNodeSessionActive && activeTool !== "place-opening") {
       return;
     }
 
@@ -153,7 +161,8 @@ export function App() {
       const liveState = useFloorplannerStore.getState();
       const drawActive = liveState.drag.active && liveState.drag.intent === "draw-wall";
       const moveNodeActive = liveState.drag.active && liveState.drag.intent === "move-node";
-      if (!drawActive && !moveNodeActive) {
+      const openingActive = activeTool === "place-opening";
+      if (!drawActive && !moveNodeActive && !openingActive) {
         return;
       }
 
@@ -168,6 +177,7 @@ export function App() {
         pendingNodeDragRef.current = null;
         setActiveTool("select");
         setWallPreview(null);
+        setOpeningPreview(null);
       }
     };
 
@@ -175,7 +185,7 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isDrawWallSessionActive, isMoveNodeSessionActive]);
+  }, [activeTool, isDrawWallSessionActive, isMoveNodeSessionActive]);
 
   const toWorldPoint = (event: React.MouseEvent<SVGSVGElement>): { x: number; y: number } => {
     const svg = canvasRef.current;
@@ -228,6 +238,43 @@ export function App() {
     if (activeTool === "draw-wall" && isDrawWallSessionActive) {
       const preview = state.previewWallPolyline(world);
       setWallPreview(preview);
+      setOpeningPreview(null);
+      return;
+    }
+
+    if (activeTool === "place-opening") {
+      const edgeHit = hitTestEdge(state.project.graph, world);
+      if (!edgeHit) {
+        setOpeningPreview(null);
+        return;
+      }
+      const edge = state.project.graph.edges[edgeHit.edgeId];
+      if (!edge) {
+        setOpeningPreview(null);
+        return;
+      }
+      const a = state.project.graph.nodes[edge.nodeAId];
+      const b = state.project.graph.nodes[edge.nodeBId];
+      if (!a || !b) {
+        setOpeningPreview(null);
+        return;
+      }
+      const edgeLength = Math.hypot(b.x - a.x, b.y - a.y);
+      if (edgeLength <= 0) {
+        setOpeningPreview(null);
+        return;
+      }
+      const offsetOnEdge = Math.hypot(edgeHit.projection.x - a.x, edgeHit.projection.y - a.y);
+      const openingWidth = 90;
+      const half = openingWidth / 2;
+      const valid = offsetOnEdge >= half && offsetOnEdge <= edgeLength - half;
+      setOpeningPreview({
+        edgeId: edgeHit.edgeId,
+        x: edgeHit.projection.x,
+        y: edgeHit.projection.y,
+        valid,
+        offsetOnEdge,
+      });
     }
   };
 
@@ -263,6 +310,31 @@ export function App() {
         return;
       }
       setWallPreview(null);
+      return;
+    }
+
+    if (activeTool === "place-opening") {
+      const preview = openingPreview;
+      if (!preview || !preview.valid) {
+        return;
+      }
+      const host = state.project.graph.edges[preview.edgeId];
+      if (!host) {
+        return;
+      }
+      state.upsertOpening({
+        id: createOpeningId(),
+        subtype: "interior_door",
+        hostEdgeId: preview.edgeId,
+        offsetOnEdge: preview.offsetOnEdge,
+        width: 90,
+        height: 210,
+        floorLevel: host.floorLevel,
+        swing: "left",
+      });
+      setSelectionExclusive("none");
+      setOpeningPreview(null);
+      setActiveTool("select");
       return;
     }
 
@@ -417,17 +489,34 @@ export function App() {
       <div style={{ display: "flex", gap: 8 }}>
         <button
           data-testid="tool-select"
-          onClick={() => setActiveTool("select")}
+          onClick={() => {
+            setActiveTool("select");
+            setWallPreview(null);
+            setOpeningPreview(null);
+          }}
           style={{ opacity: activeTool === "select" ? 1 : 0.7 }}
         >
           Select
         </button>
         <button
           data-testid="tool-draw-wall"
-          onClick={() => setActiveTool("draw-wall")}
+          onClick={() => {
+            setActiveTool("draw-wall");
+            setOpeningPreview(null);
+          }}
           style={{ opacity: activeTool === "draw-wall" ? 1 : 0.7 }}
         >
           Draw wall
+        </button>
+        <button
+          data-testid="tool-place-opening"
+          onClick={() => {
+            setActiveTool("place-opening");
+            setWallPreview(null);
+          }}
+          style={{ opacity: activeTool === "place-opening" ? 1 : 0.7 }}
+        >
+          Place opening
         </button>
         <button onClick={seedRectangle}>Seed rectangle</button>
         <button
@@ -449,7 +538,8 @@ export function App() {
       </div>
       <p>
         Select mode: click to select, drag node handles to reshape walls. Draw mode: click to draw, Enter or
-        double-click to finish, Esc to cancel.
+        double-click to finish, Esc to cancel. Place opening mode: hover walls for valid host preview, click to
+        place.
       </p>
       <div className="canvas" style={{ height: 520, border: "1px solid #2a2e3c", borderRadius: 8 }}>
         <svg
@@ -533,6 +623,51 @@ export function App() {
               </text>
             </g>
           ) : null}
+          {openingPreview ? (
+            <g pointerEvents="none">
+              <circle
+                cx={openingPreview.x}
+                cy={openingPreview.y}
+                r={8}
+                fill={openingPreview.valid ? "rgba(112, 227, 196, 0.7)" : "rgba(255, 107, 107, 0.7)"}
+                stroke={openingPreview.valid ? "#70e3c4" : "#ff6b6b"}
+                strokeWidth={2}
+              />
+            </g>
+          ) : null}
+          {Object.values(state.project.openings).map((opening) => {
+            const edge = renderedGraph.edges[opening.hostEdgeId];
+            if (!edge) {
+              return null;
+            }
+            const a = renderedGraph.nodes[edge.nodeAId];
+            const b = renderedGraph.nodes[edge.nodeBId];
+            if (!a || !b) {
+              return null;
+            }
+            const edgeLength = Math.hypot(b.x - a.x, b.y - a.y);
+            if (edgeLength <= 0) {
+              return null;
+            }
+            const t = Math.max(0, Math.min(1, opening.offsetOnEdge / edgeLength));
+            const x = a.x + (b.x - a.x) * t;
+            const y = a.y + (b.y - a.y) * t;
+            const angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+            return (
+              <g key={opening.id} transform={`translate(${x} ${y}) rotate(${angle})`}>
+                <rect
+                  x={-opening.width / 2}
+                  y={-4}
+                  width={opening.width}
+                  height={8}
+                  fill="rgba(255, 209, 102, 0.85)"
+                  stroke="#ffb703"
+                  strokeWidth={1.5}
+                  rx={2}
+                />
+              </g>
+            );
+          })}
           {Object.values(renderedGraph.nodes).map((node) => (
             <circle
               key={node.id}
@@ -555,6 +690,7 @@ export function App() {
         <li>Drag active: {state.drag.active ? "yes" : "no"}</li>
         <li>Draw-wall active: {isDrawWallSessionActive ? "yes" : "no"}</li>
         <li>Preview active: {state.drag.previewPatch ? "yes" : "no"}</li>
+        <li>Openings: {Object.keys(state.project.openings).length}</li>
       </ul>
       <pre>{JSON.stringify(state.debug.lastValidationErrors, null, 2)}</pre>
     </main>
