@@ -2,13 +2,114 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFloorplannerStore } from "../store/createStore";
 import { createEmptyProjectData } from "../core/model/defaults";
 import { addEdge, addNode } from "../core/graph/graphOps";
+import type { EdgeId, Face, NodeId, Point2D, WallGraph } from "../core/model/projectTypes";
+import type { SelectionState } from "../store/types";
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 800;
+const NODE_HIT_RADIUS_CM = 14;
+const EDGE_HIT_TOLERANCE_CM = 12;
+
+type CanvasTool = "select" | "draw-wall";
+
+function emptySelection(): SelectionState {
+  return {
+    nodeIds: [],
+    edgeIds: [],
+    roomIds: [],
+    openingIds: [],
+    furnitureIds: [],
+    annotationIds: [],
+    marquee: null,
+  };
+}
+
+function distanceToSegment(
+  p: Point2D,
+  a: Point2D,
+  b: Point2D,
+): { distance: number; projection: Point2D } {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const lengthSq = vx * vx + vy * vy;
+  if (lengthSq === 0) {
+    return { distance: Math.hypot(p.x - a.x, p.y - a.y), projection: { x: a.x, y: a.y } };
+  }
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / lengthSq));
+  const projection = { x: a.x + vx * t, y: a.y + vy * t };
+  return { distance: Math.hypot(p.x - projection.x, p.y - projection.y), projection };
+}
+
+function pointInPolygon(point: Point2D, polygon: Point2D[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const pi = polygon[i];
+    const pj = polygon[j];
+    if (!pi || !pj) {
+      continue;
+    }
+    const intersects =
+      (pi.y > point.y) !== (pj.y > point.y) &&
+      point.x < ((pj.x - pi.x) * (point.y - pi.y)) / (pj.y - pi.y + Number.EPSILON) + pi.x;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function hitTestNode(graph: WallGraph, point: Point2D): NodeId | null {
+  let bestNodeId: NodeId | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const node of Object.values(graph.nodes)) {
+    const d = Math.hypot(point.x - node.x, point.y - node.y);
+    if (d <= NODE_HIT_RADIUS_CM && d < bestDistance) {
+      bestDistance = d;
+      bestNodeId = node.id;
+    }
+  }
+  return bestNodeId;
+}
+
+function hitTestEdge(graph: WallGraph, point: Point2D): { edgeId: EdgeId; projection: Point2D } | null {
+  let best: { edgeId: EdgeId; projection: Point2D; distance: number } | null = null;
+  for (const edge of Object.values(graph.edges)) {
+    const a = graph.nodes[edge.nodeAId];
+    const b = graph.nodes[edge.nodeBId];
+    if (!a || !b) {
+      continue;
+    }
+    const { distance, projection } = distanceToSegment(point, a, b);
+    if (distance > EDGE_HIT_TOLERANCE_CM) {
+      continue;
+    }
+    if (!best || distance < best.distance) {
+      best = { edgeId: edge.id, projection, distance };
+    }
+  }
+  return best ? { edgeId: best.edgeId, projection: best.projection } : null;
+}
+
+function hitTestFace(faces: Face[], point: Point2D): Face | null {
+  for (const face of faces) {
+    if (pointInPolygon(point, face.polygon)) {
+      return face;
+    }
+  }
+  return null;
+}
 
 export function App() {
   const state = useFloorplannerStore((s) => s);
   const canvasRef = useRef<SVGSVGElement | null>(null);
+  const pendingNodeDragRef = useRef<{
+    nodeId: NodeId;
+    startWorld: Point2D;
+    pointerStartClient: { x: number; y: number };
+    moved: boolean;
+  } | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const [activeTool, setActiveTool] = useState<CanvasTool>("select");
   const [wallPreview, setWallPreview] = useState<{
     from: { x: number; y: number };
     to: { x: number; y: number };
@@ -25,27 +126,47 @@ export function App() {
     [state.project, state.topology.faces],
   );
 
-  const isDrawWallActive = state.drag.active && state.drag.intent === "draw-wall";
+  const isDrawWallSessionActive = state.drag.active && state.drag.intent === "draw-wall";
+  const isMoveNodeSessionActive = state.drag.active && state.drag.intent === "move-node";
+  const renderedGraph = state.drag.previewPatch?.graph ?? state.project.graph;
+  const roomByFaceId = useMemo(() => {
+    const map = new Map<string, { id: string; label: string; state: string }>();
+    for (const room of Object.values(state.project.roomMetadataMap)) {
+      if (!room.faceId) {
+        continue;
+      }
+      map.set(room.faceId, {
+        id: room.id,
+        label: room.label,
+        state: room.state,
+      });
+    }
+    return map;
+  }, [state.project.roomMetadataMap]);
 
   useEffect(() => {
-    if (!isDrawWallActive) {
+    if (!isDrawWallSessionActive && !isMoveNodeSessionActive) {
       return;
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
       const liveState = useFloorplannerStore.getState();
-      const active = liveState.drag.active && liveState.drag.intent === "draw-wall";
-      if (!active) {
+      const drawActive = liveState.drag.active && liveState.drag.intent === "draw-wall";
+      const moveNodeActive = liveState.drag.active && liveState.drag.intent === "move-node";
+      if (!drawActive && !moveNodeActive) {
         return;
       }
 
-      if (event.key === "Enter") {
+      if (event.key === "Enter" && drawActive) {
         event.preventDefault();
         liveState.finishWallPolyline();
+        setActiveTool("select");
         setWallPreview(null);
       } else if (event.key === "Escape") {
         event.preventDefault();
         liveState.cancelInteraction();
+        pendingNodeDragRef.current = null;
+        setActiveTool("select");
         setWallPreview(null);
       }
     };
@@ -54,7 +175,7 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isDrawWallActive]);
+  }, [isDrawWallSessionActive, isMoveNodeSessionActive]);
 
   const toWorldPoint = (event: React.MouseEvent<SVGSVGElement>): { x: number; y: number } => {
     const svg = canvasRef.current;
@@ -71,43 +192,156 @@ export function App() {
     };
   };
 
-  const handleCanvasMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
-    if (!isDrawWallActive) {
+  const setSelectionExclusive = (
+    kind: "node" | "edge" | "room" | "none",
+    id?: string,
+  ) => {
+    const selection = emptySelection();
+    if (kind === "node" && id) {
+      selection.nodeIds = [id];
+    } else if (kind === "edge" && id) {
+      selection.edgeIds = [id];
+    } else if (kind === "room" && id) {
+      selection.roomIds = [id];
+    }
+    state.setSelection(selection);
+  };
+
+  const handleCanvasPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    const world = toWorldPoint(event);
+    const pendingDrag = pendingNodeDragRef.current;
+    if (pendingDrag && activeTool === "select") {
+      const movedClientDistance = Math.hypot(
+        event.clientX - pendingDrag.pointerStartClient.x,
+        event.clientY - pendingDrag.pointerStartClient.y,
+      );
+      if (movedClientDistance > 2) {
+        if (!state.drag.active) {
+          state.beginInteraction("move-node", [pendingDrag.nodeId], pendingDrag.startWorld);
+        }
+        state.updateInteractionPreview(world);
+        pendingDrag.moved = true;
+      }
       return;
     }
-    const world = toWorldPoint(event);
-    const preview = state.previewWallPolyline(world);
-    setWallPreview(preview);
+
+    if (activeTool === "draw-wall" && isDrawWallSessionActive) {
+      const preview = state.previewWallPolyline(world);
+      setWallPreview(preview);
+    }
   };
 
   const handleCanvasClick = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+
     const world = toWorldPoint(event);
-    if (!isDrawWallActive) {
-      state.startWallPolyline(world, 0);
+    if (activeTool === "draw-wall" || isDrawWallSessionActive) {
+      if (!isDrawWallSessionActive) {
+        const edgeHit = hitTestEdge(state.project.graph, world);
+        if (edgeHit) {
+          state.startWallPolylineFromEdgePoint(edgeHit.edgeId, edgeHit.projection, 0);
+        } else {
+          state.startWallPolyline(world, 0);
+        }
+        setSelectionExclusive("none");
+        setWallPreview(null);
+        return;
+      }
+
+      if (event.detail > 1) {
+        return;
+      }
+
+      state.previewWallPolyline(world);
+      const result = state.confirmWallPolylinePreview() ?? state.addWallPolylinePoint(world);
+      if (!result || result.closedLoop) {
+        setActiveTool("select");
+        setWallPreview(null);
+        return;
+      }
       setWallPreview(null);
       return;
     }
 
-    if (event.detail > 1) {
+    if (activeTool !== "select" || isMoveNodeSessionActive) {
       return;
     }
 
-    state.previewWallPolyline(world);
-    const result = state.confirmWallPolylinePreview() ?? state.addWallPolylinePoint(world);
-    if (!result || result.closedLoop) {
-      setWallPreview(null);
+    const nodeHit = hitTestNode(state.project.graph, world);
+    if (nodeHit) {
+      setSelectionExclusive("node", nodeHit);
       return;
     }
-    setWallPreview(null);
+
+    const edgeHit = hitTestEdge(state.project.graph, world);
+    if (edgeHit) {
+      setSelectionExclusive("edge", edgeHit.edgeId);
+      return;
+    }
+
+    const faceHit = hitTestFace(state.topology.faces, world);
+    if (faceHit) {
+      const room = roomByFaceId.get(faceHit.id);
+      if (room) {
+        setSelectionExclusive("room", room.id);
+      } else {
+        setSelectionExclusive("none");
+      }
+      return;
+    }
+
+    setSelectionExclusive("none");
   };
 
   const handleCanvasDoubleClick = (event: React.MouseEvent<SVGSVGElement>) => {
-    if (!isDrawWallActive) {
+    if (!isDrawWallSessionActive) {
       return;
     }
     event.preventDefault();
     state.finishWallPolyline();
+    setActiveTool("select");
     setWallPreview(null);
+  };
+
+  const handleCanvasPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (activeTool !== "select") {
+      return;
+    }
+    const world = toWorldPoint(event);
+    const nodeHit = hitTestNode(state.project.graph, world);
+    if (!nodeHit) {
+      pendingNodeDragRef.current = null;
+      return;
+    }
+    const node = state.project.graph.nodes[nodeHit];
+    if (!node) {
+      pendingNodeDragRef.current = null;
+      return;
+    }
+    pendingNodeDragRef.current = {
+      nodeId: nodeHit,
+      startWorld: { x: node.x, y: node.y },
+      pointerStartClient: { x: event.clientX, y: event.clientY },
+      moved: false,
+    };
+  };
+
+  const handleCanvasPointerUp = () => {
+    const pendingDrag = pendingNodeDragRef.current;
+    if (!pendingDrag) {
+      return;
+    }
+    if (state.drag.active && state.drag.intent === "move-node") {
+      state.commitInteraction();
+      setSelectionExclusive("node", pendingDrag.nodeId);
+      suppressNextClickRef.current = true;
+    } else if (!pendingDrag.moved) {
+      setSelectionExclusive("node", pendingDrag.nodeId);
+    }
+    pendingNodeDragRef.current = null;
   };
 
   const seedRectangle = () => {
@@ -143,25 +377,31 @@ export function App() {
 
   return (
     <main style={{ padding: 16, fontFamily: "Inter, Arial, sans-serif" }}>
-      <h1>Summerhouse Floorplanner (Foundation)</h1>
-      <p>Single structural truth: wall graph (nodes + edges).</p>
+      <h1>Summerhouse Floorplanner (Beta)</h1>
+      <p>Wall graph is the single source of structural truth.</p>
       <div style={{ display: "flex", gap: 8 }}>
+        <button
+          data-testid="tool-select"
+          onClick={() => setActiveTool("select")}
+          style={{ opacity: activeTool === "select" ? 1 : 0.7 }}
+        >
+          Select
+        </button>
+        <button
+          data-testid="tool-draw-wall"
+          onClick={() => setActiveTool("draw-wall")}
+          style={{ opacity: activeTool === "draw-wall" ? 1 : 0.7 }}
+        >
+          Draw wall
+        </button>
         <button onClick={seedRectangle}>Seed rectangle</button>
         <button
           onClick={() => {
-            const firstNodeId = Object.keys(state.project.graph.nodes)[0];
+            const firstNodeId = Object.keys(renderedGraph.nodes)[0];
             if (!firstNodeId) {
               return;
             }
-            state.setSelection({
-              nodeIds: [firstNodeId],
-              edgeIds: [],
-              roomIds: [],
-              openingIds: [],
-              furnitureIds: [],
-              annotationIds: [],
-              marquee: null,
-            });
+            setSelectionExclusive("node", firstNodeId);
           }}
         >
           Select first node
@@ -173,23 +413,55 @@ export function App() {
         <button onClick={state.redo}>Redo</button>
       </div>
       <p>
-        Click canvas to start/continue walls. Double-click or Enter finishes. Esc cancels current draw
-        interaction.
+        Select mode: click to select, drag node handles to reshape walls. Draw mode: click to draw, Enter or
+        double-click to finish, Esc to cancel.
       </p>
       <div className="canvas" style={{ height: 520, border: "1px solid #2a2e3c", borderRadius: 8 }}>
         <svg
+          data-testid="floor-canvas"
           ref={canvasRef}
           viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-          onMouseMove={handleCanvasMouseMove}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
           onClick={handleCanvasClick}
           onDoubleClick={handleCanvasDoubleClick}
         >
-          {Object.values(state.project.graph.edges).map((edge) => {
-            const a = state.project.graph.nodes[edge.nodeAId];
-            const b = state.project.graph.nodes[edge.nodeBId];
+          {state.topology.faces.map((face) => {
+            const room = roomByFaceId.get(face.id);
+            const isRoomSelected = room ? state.selection.roomIds.includes(room.id) : false;
+            const stateColor =
+              room?.state === "invalid" || room?.state === "orphaned"
+                ? "rgba(255, 107, 107, 0.20)"
+                : "rgba(112, 227, 196, 0.14)";
+            return (
+              <g key={face.id} pointerEvents="none">
+                <polygon
+                  points={face.polygon.map((p) => `${p.x},${p.y}`).join(" ")}
+                  fill={isRoomSelected ? "rgba(255, 209, 102, 0.24)" : stateColor}
+                  stroke={isRoomSelected ? "#ffd166" : "rgba(112, 227, 196, 0.45)"}
+                  strokeWidth={1.5}
+                />
+                <text
+                  x={face.centroid.x}
+                  y={face.centroid.y}
+                  fill="#e6f7f2"
+                  fontSize={14}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                >
+                  {room?.label ?? "Room"} ({(face.area / 10000).toFixed(2)} m²)
+                </text>
+              </g>
+            );
+          })}
+          {Object.values(renderedGraph.edges).map((edge) => {
+            const a = renderedGraph.nodes[edge.nodeAId];
+            const b = renderedGraph.nodes[edge.nodeBId];
             if (!a || !b) {
               return null;
             }
+            const selected = state.selection.edgeIds.includes(edge.id);
             return (
               <line
                 key={edge.id}
@@ -197,7 +469,7 @@ export function App() {
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                stroke="#b5c0ff"
+                stroke={selected ? "#ffd166" : "#b5c0ff"}
                 strokeWidth={Math.max(edge.thickness / 10, 2)}
                 strokeLinecap="round"
               />
@@ -225,13 +497,15 @@ export function App() {
               </text>
             </g>
           ) : null}
-          {Object.values(state.project.graph.nodes).map((node) => (
+          {Object.values(renderedGraph.nodes).map((node) => (
             <circle
               key={node.id}
               cx={node.x}
               cy={node.y}
-              r={6}
+              r={7}
               fill={state.selection.nodeIds.includes(node.id) ? "#ffd166" : "#f5f8ff"}
+              stroke={state.selection.nodeIds.includes(node.id) ? "#ffb703" : "#384057"}
+              strokeWidth={2}
             />
           ))}
         </svg>
@@ -241,8 +515,9 @@ export function App() {
         <li>Edges: {summary.edgeCount}</li>
         <li>Faces: {summary.faceCount}</li>
         <li>Rooms: {summary.roomCount}</li>
+        <li>Active tool: {activeTool}</li>
         <li>Drag active: {state.drag.active ? "yes" : "no"}</li>
-        <li>Draw-wall active: {isDrawWallActive ? "yes" : "no"}</li>
+        <li>Draw-wall active: {isDrawWallSessionActive ? "yes" : "no"}</li>
         <li>Preview active: {state.drag.previewPatch ? "yes" : "no"}</li>
       </ul>
       <pre>{JSON.stringify(state.debug.lastValidationErrors, null, 2)}</pre>
